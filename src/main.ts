@@ -1,0 +1,208 @@
+import '@lichess-org/chessground/assets/chessground.base.css';
+import '@lichess-org/chessground/assets/chessground.brown.css';
+import '@lichess-org/chessground/assets/chessground.cburnett.css';
+import './style.css';
+
+import { loadConfig, saveConfig } from './config';
+import { loadRepertoire } from './repertoire';
+import {
+  startGame, newGame, setListeners, updateConfig, getPhase,
+  getExplorerData, fetchExplorerForFen, playExplorerMove, continueFromHere,
+} from './game';
+import {
+  flipBoard, navigateBack, navigateForward, onViewChange,
+  getMoveHistory, getViewIndex, isViewingHistory, showFen,
+} from './board';
+import {
+  initUI,
+  updateStatus,
+  updateMoveList,
+  updateExplorerPanel,
+  updateAlertBanner,
+  setExplorerAlwaysShow,
+  resetExplorerRevealed,
+  setNextMoveUci,
+  setEvalWinPct,
+  initSidebarTabs,
+  onTabChange,
+  getActiveTab,
+} from './ui';
+import { renderTreePanel, refreshTree } from './tree-ui';
+import type { AppConfig, GamePhase } from './types';
+import { initEngine, evaluate, winningChance, formatScore } from './engine';
+import type { EvalScore } from './engine';
+
+const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+let config = loadConfig();
+let currentOpeningName: string | undefined;
+
+function computeNextMoveUci(): string | null {
+  const history = getMoveHistory();
+  const vi = getViewIndex();
+  // vi is the position after move vi. The next move from this position is history[vi].
+  if (vi < history.length) {
+    return history[vi].uci;
+  }
+  return null;
+}
+
+function getViewedFen(): string {
+  const history = getMoveHistory();
+  const vi = getViewIndex();
+  if (vi === 0) return STARTING_FEN;
+  return history[vi - 1].fen;
+}
+
+function updateEvalBar(score: EvalScore): void {
+  const fillEl = document.getElementById('eval-fill')!;
+  const labelEl = document.getElementById('eval-label')!;
+
+  const whiteChance = winningChance(score);
+  fillEl.style.height = `${(whiteChance * 100).toFixed(1)}%`;
+
+  const text = formatScore(score);
+  labelEl.textContent = text;
+
+  if (score.value < 0 || (score.type === 'mate' && score.value < 0)) {
+    labelEl.className = 'black-advantage';
+  } else {
+    labelEl.className = '';
+  }
+
+  // Update alert banner with engine eval (white's perspective, 0-100)
+  setEvalWinPct(whiteChance * 100);
+  updateAlertBanner();
+}
+
+function setEvalBarVisible(visible: boolean): void {
+  document.getElementById('eval-bar')!.classList.toggle('hidden', !visible);
+}
+
+function requestEval(fen: string): void {
+  setEvalWinPct(null); // clear stale eval while new one computes
+  if (!config.showEval) return;
+  evaluate(fen, updateEvalBar);
+}
+
+function refreshExplorerMode(): void {
+  setExplorerAlwaysShow(config.playerColor === 'both' || isViewingHistory());
+}
+
+function refreshTreeIfVisible(): void {
+  if (getActiveTab() === 'lines') {
+    const treePanel = document.getElementById('tree-panel');
+    if (treePanel) refreshTree(treePanel);
+  }
+}
+
+function boot(): void {
+  loadRepertoire();
+
+  const boardEl = document.getElementById('board')!;
+
+  initEngine();
+
+  setListeners(
+    (phase: GamePhase) => {
+      updateStatus(phase, currentOpeningName);
+    },
+    () => {
+      const { data } = getExplorerData();
+      if (data?.opening?.name) {
+        currentOpeningName = data.opening.name;
+      }
+      updateStatus(getPhase(), currentOpeningName);
+      setNextMoveUci(computeNextMoveUci());
+      refreshExplorerMode();
+      updateExplorerPanel();
+      updateAlertBanner();
+    },
+    () => {
+      resetExplorerRevealed();
+      refreshExplorerMode();
+      updateMoveList();
+      updateExplorerPanel();
+      requestEval(getViewedFen());
+    },
+  );
+
+  initUI(
+    config,
+    (newConfig: AppConfig) => {
+      const evalToggled = newConfig.showEval !== config.showEval;
+      config = { ...newConfig };
+      saveConfig(config);
+      updateConfig(config);
+      refreshExplorerMode();
+      setEvalBarVisible(config.showEval);
+      updateExplorerPanel();
+      updateAlertBanner();
+      updateMoveList();
+      if (evalToggled && config.showEval) {
+        requestEval(getViewedFen());
+      }
+    },
+    () => {
+      currentOpeningName = undefined;
+      newGame(config);
+    },
+    () => {
+      flipBoard();
+    },
+    (uci: string) => {
+      playExplorerMove(uci);
+    },
+    () => {
+      continueFromHere();
+    },
+    () => {
+      currentOpeningName = undefined;
+      newGame(config);
+      updateExplorerPanel();
+      updateAlertBanner();
+      refreshTreeIfVisible();
+    },
+  );
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigateBack();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      navigateForward();
+    }
+  });
+
+  onViewChange((_index, _total) => {
+    updateMoveList();
+    refreshExplorerMode();
+    const fen = getViewedFen();
+    setNextMoveUci(computeNextMoveUci());
+    fetchExplorerForFen(fen);
+    requestEval(fen);
+  });
+
+  // Initialize sidebar tabs and tree panel
+  const treePanel = document.getElementById('tree-panel')!;
+  initSidebarTabs();
+  renderTreePanel(treePanel, (fen: string) => {
+    showFen(fen);
+    fetchExplorerForFen(fen);
+    requestEval(fen);
+  });
+
+  onTabChange(() => {
+    refreshTree(treePanel);
+  });
+
+  startGame(boardEl, config);
+  refreshExplorerMode();
+  updateMoveList();
+  updateExplorerPanel();
+  setEvalBarVisible(config.showEval);
+  requestEval(STARTING_FEN);
+}
+
+boot();

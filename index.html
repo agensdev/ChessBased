@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChessBased — Opening Trainer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23c9a84c'>♞</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <div id="left-sidebar">
+      <div id="system-picker"></div>
+      <div id="config-inline"></div>
+    </div>
+    <div id="settings-drawer-overlay" class="drawer-overlay hidden"></div>
+    <div id="settings-drawer" class="drawer hidden">
+      <div class="drawer-header">
+        <h2 class="drawer-title">Settings</h2>
+        <button id="drawer-close" class="drawer-close-btn">&times;</button>
+      </div>
+      <div id="config-panel" class="drawer-body"></div>
+    </div>
+    <div id="board-column">
+      <div id="board-row">
+        <div id="eval-bar">
+          <div id="eval-fill"></div>
+          <div id="eval-label">0.0</div>
+        </div>
+        <div id="board"></div>
+      </div>
+      <div id="controls"></div>
+      <div id="alert-banner"></div>
+      <div id="moves"></div>
+      <div id="move-actions"></div>
+    </div>
+    <div id="right-sidebar">
+      <div id="status"></div>
+      <div id="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="explorer">Explorer</button>
+        <button class="sidebar-tab" data-tab="lines">Lines</button>
+      </div>
+      <div id="tab-explorer" class="tab-panel">
+        <div id="explorer-moves"></div>
+      </div>
+      <div id="tab-lines" class="tab-panel hidden">
+        <div id="tree-panel"></div>
+      </div>
+    </div>
+    <div id="pgn-modal-overlay" class="drawer-overlay hidden"></div>
+    <div id="pgn-modal" class="pgn-modal hidden">
+      <div class="pgn-modal-header">
+        <h2>Import PGN</h2>
+        <button id="pgn-modal-close" class="drawer-close-btn">&times;</button>
+      </div>
+      <div class="pgn-modal-body">
+        <textarea id="pgn-textarea" placeholder="Paste PGN here...&#10;&#10;Example:&#10;1. e4 e5 2. Nf3 Nc6 3. Bb5 a6"></textarea>
+        <div id="pgn-result" class="pgn-result"></div>
+        <div class="pgn-modal-actions">
+          <button id="pgn-import-btn" class="btn btn-primary">Import</button>
+          <button id="pgn-cancel-btn" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
