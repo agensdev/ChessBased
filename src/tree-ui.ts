@@ -1,5 +1,5 @@
 import { buildRepertoireTree, type TreeNode } from './tree';
-import { getActiveRepertoire, FREE_PLAY_NAME, FULL_REPERTOIRE_NAME } from './repertoire';
+import { getActiveOpening, FREE_PLAY_NAME, FULL_REPERTOIRE_NAME } from './repertoire';
 
 type NavigateCallback = (fen: string) => void;
 
@@ -17,7 +17,7 @@ export function refreshTree(container: HTMLElement): void {
 function refresh(container: HTMLElement): void {
   container.innerHTML = '';
 
-  if (getActiveRepertoire() === FREE_PLAY_NAME) {
+  if (getActiveOpening() === FREE_PLAY_NAME) {
     container.innerHTML = '<div class="tree-empty">Select an opening to see its lines.</div>';
     return;
   }

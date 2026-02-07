@@ -1,25 +1,25 @@
-import type { RepertoireEntry } from './types';
+import type { OpeningEntry } from './types';
 
 export const FREE_PLAY_NAME = 'Free play';
 export const FULL_REPERTOIRE_NAME = 'Full repertoire';
 
 const STORAGE_KEY = 'chessbased-systems';
 
-type RepertoireStore = Record<string, RepertoireEntry>;
+type OpeningStore = Record<string, OpeningEntry>;
 
 interface RepertoireData {
-  systems: Record<string, RepertoireStore>;
+  systems: Record<string, OpeningStore>;
   active: string;
 }
 
 let data: RepertoireData = { systems: { [FREE_PLAY_NAME]: {} }, active: FREE_PLAY_NAME };
 
-function getStore(): RepertoireStore {
+function getStore(): OpeningStore {
   return data.systems[data.active] ?? {};
 }
 
-function getMergedStore(): RepertoireStore {
-  const merged: RepertoireStore = {};
+function getMergedStore(): OpeningStore {
+  const merged: OpeningStore = {};
   for (const [name, store] of Object.entries(data.systems)) {
     if (name === FREE_PLAY_NAME) continue;
     for (const [key, entry] of Object.entries(store)) {
@@ -37,7 +37,7 @@ function getMergedStore(): RepertoireStore {
   return merged;
 }
 
-export function getActiveStore(): Readonly<RepertoireStore> {
+export function getActiveStore(): Readonly<OpeningStore> {
   if (data.active === FULL_REPERTOIRE_NAME) return getMergedStore();
   return getStore();
 }
@@ -93,7 +93,7 @@ export function getLockedMoves(fen: string): string[] {
 export function lockMove(fen: string, uci: string): boolean {
   let createdRepertoire = false;
   if (data.active === FREE_PLAY_NAME || data.active === FULL_REPERTOIRE_NAME) {
-    createRepertoire();
+    createOpening();
     createdRepertoire = true;
   }
   const store = getStore();
@@ -124,21 +124,21 @@ export function isMoveLocked(fen: string, uci: string): boolean {
   return getLockedMoves(fen).includes(uci);
 }
 
-// Repertoire management
+// Opening management
 
-export function getRepertoireNames(): string[] {
+export function getOpeningNames(): string[] {
   return Object.keys(data.systems);
 }
 
-export function getActiveRepertoire(): string {
+export function getActiveOpening(): string {
   return data.active;
 }
 
-export function getStoreByName(name: string): Readonly<RepertoireStore> {
+export function getOpeningStore(name: string): Readonly<OpeningStore> {
   return data.systems[name] ?? {};
 }
 
-export function switchRepertoire(name: string): void {
+export function switchOpening(name: string): void {
   if (name === FULL_REPERTOIRE_NAME) {
     data.active = name;
     persist();
@@ -149,7 +149,7 @@ export function switchRepertoire(name: string): void {
   persist();
 }
 
-export function createRepertoire(name?: string): string {
+export function createOpening(name?: string): string {
   const finalName = name?.trim() || generateUniqueName();
   if (data.systems[finalName]) return finalName;
   data.systems[finalName] = {};
@@ -166,7 +166,7 @@ function generateUniqueName(): string {
   return `Untitled ${i}`;
 }
 
-export function deleteRepertoire(name: string): void {
+export function deleteOpening(name: string): void {
   if (name === FREE_PLAY_NAME || name === FULL_REPERTOIRE_NAME) return;
   if (!data.systems[name]) return;
   delete data.systems[name];
@@ -176,7 +176,7 @@ export function deleteRepertoire(name: string): void {
   persist();
 }
 
-export function renameRepertoire(oldName: string, newName: string): boolean {
+export function renameOpening(oldName: string, newName: string): boolean {
   if (oldName === FREE_PLAY_NAME || oldName === FULL_REPERTOIRE_NAME) return false;
   const trimmed = newName.trim();
   if (!trimmed || trimmed === FREE_PLAY_NAME || trimmed === FULL_REPERTOIRE_NAME) return false;
@@ -188,4 +188,66 @@ export function renameRepertoire(oldName: string, newName: string): boolean {
   }
   persist();
   return true;
+}
+
+// Merge openings
+
+export type MergeStrategy = 'into-a' | 'into-b' | 'as-new';
+
+function mergeStores(a: OpeningStore, b: OpeningStore): OpeningStore {
+  const merged: OpeningStore = {};
+  for (const [key, entry] of Object.entries(a)) {
+    merged[key] = { lockedMoves: [...entry.lockedMoves] };
+  }
+  for (const [key, entry] of Object.entries(b)) {
+    if (!merged[key]) {
+      merged[key] = { lockedMoves: [...entry.lockedMoves] };
+    } else {
+      for (const uci of entry.lockedMoves) {
+        if (!merged[key].lockedMoves.includes(uci)) {
+          merged[key].lockedMoves.push(uci);
+        }
+      }
+    }
+  }
+  return merged;
+}
+
+function generateMergeName(a: string, b: string): string {
+  const base = `${a} + ${b}`;
+  const names = Object.keys(data.systems);
+  if (!names.includes(base)) return base;
+  let i = 2;
+  while (names.includes(`${base} (${i})`)) i++;
+  return `${base} (${i})`;
+}
+
+export function mergeOpenings(nameA: string, nameB: string, strategy: MergeStrategy): string {
+  const storeA = data.systems[nameA];
+  const storeB = data.systems[nameB];
+  if (!storeA || !storeB) return data.active;
+
+  const merged = mergeStores(storeA, storeB);
+
+  switch (strategy) {
+    case 'into-a':
+      data.systems[nameA] = merged;
+      delete data.systems[nameB];
+      data.active = nameA;
+      break;
+    case 'into-b':
+      data.systems[nameB] = merged;
+      delete data.systems[nameA];
+      data.active = nameB;
+      break;
+    case 'as-new': {
+      const newName = generateMergeName(nameA, nameB);
+      data.systems[newName] = merged;
+      data.active = newName;
+      break;
+    }
+  }
+
+  persist();
+  return data.active;
 }

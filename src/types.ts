@@ -20,7 +20,7 @@ export interface ExplorerResponse {
   moves: ExplorerMove[];
 }
 
-export interface RepertoireEntry {
+export interface OpeningEntry {
   lockedMoves: string[]; // UCI strings
 }
 

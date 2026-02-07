@@ -1,7 +1,7 @@
 import { Chess, parseUci } from 'chessops';
 import { makeFen, parseFen } from 'chessops/fen';
 import { makeSan } from 'chessops/san';
-import { getActiveStore, getActiveRepertoire, FREE_PLAY_NAME, positionKey } from './repertoire';
+import { getActiveStore, getActiveOpening, FREE_PLAY_NAME, positionKey } from './repertoire';
 
 export interface TreeNode {
   san: string;
@@ -15,7 +15,7 @@ export interface TreeNode {
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export function buildRepertoireTree(): TreeNode[] {
-  if (getActiveRepertoire() === FREE_PLAY_NAME) return [];
+  if (getActiveOpening() === FREE_PLAY_NAME) return [];
 
   const store = getActiveStore();
   const visited = new Set<string>();

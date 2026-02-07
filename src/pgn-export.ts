@@ -1,5 +1,5 @@
 import { buildTreeFromStore, type TreeNode } from './tree';
-import { getRepertoireNames, getStoreByName, getActiveRepertoire, FREE_PLAY_NAME, FULL_REPERTOIRE_NAME } from './repertoire';
+import { getOpeningNames, getOpeningStore, getActiveOpening, FREE_PLAY_NAME, FULL_REPERTOIRE_NAME } from './repertoire';
 
 function treeToPgn(nodes: TreeNode[]): string {
   return renderNodes(nodes, true);
@@ -40,7 +40,7 @@ function formatMove(node: TreeNode, needsNumber: boolean): string {
 }
 
 export function exportOpening(name: string): string {
-  const store = getStoreByName(name);
+  const store = getOpeningStore(name);
   const tree = buildTreeFromStore(store);
   if (tree.length === 0) return '';
 
@@ -49,13 +49,13 @@ export function exportOpening(name: string): string {
 }
 
 export function exportActiveOpening(): string {
-  const name = getActiveRepertoire();
+  const name = getActiveOpening();
   if (name === FREE_PLAY_NAME) return '';
   if (name === FULL_REPERTOIRE_NAME) return exportAll();
   return exportOpening(name);
 }
 
 export function exportAll(): string {
-  const names = getRepertoireNames().filter(n => n !== FREE_PLAY_NAME);
+  const names = getOpeningNames().filter(n => n !== FREE_PLAY_NAME);
   return names.map(name => exportOpening(name)).filter(Boolean).join('\n');
 }

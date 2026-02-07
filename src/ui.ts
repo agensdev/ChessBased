@@ -14,17 +14,19 @@ import type { Key } from '@lichess-org/chessground/types';
 import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes } from './board';
 import {
   isMoveLocked, lockMove, unlockMove, getLockedMoves,
-  getRepertoireNames, getActiveRepertoire, switchRepertoire, createRepertoire, deleteRepertoire, renameRepertoire,
+  getOpeningNames, getActiveOpening, switchOpening, createOpening, deleteOpening, renameOpening,
+  mergeOpenings,
   FREE_PLAY_NAME,
   FULL_REPERTOIRE_NAME,
 } from './repertoire';
+import type { MergeStrategy } from './repertoire';
 import { importPgn, fetchStudyPgn } from './pgn-import';
 import { exportActiveOpening, exportAll } from './pgn-export';
 import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
 
 type ContinueCallback = () => void;
-type RepertoireChangeCallback = () => void;
+type OpeningChangeCallback = () => void;
 
 type ConfigChangeCallback = (config: AppConfig) => void;
 type NewGameCallback = () => void;
@@ -36,7 +38,7 @@ let newGameCb: NewGameCallback;
 let flipCb: FlipCallback;
 let explorerMoveClickCb: ExplorerMoveClickCallback | null = null;
 let continueCb: ContinueCallback | null = null;
-let repertoireChangeCb: RepertoireChangeCallback | null = null;
+let openingChangeCb: OpeningChangeCallback | null = null;
 let currentConfig: AppConfig;
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -55,7 +57,7 @@ export function initUI(
   onFlip: FlipCallback,
   onExplorerMoveClick?: ExplorerMoveClickCallback,
   onContinue?: ContinueCallback,
-  onRepertoireChange?: RepertoireChangeCallback,
+  onRepertoireChange?: OpeningChangeCallback,
 ): void {
   currentConfig = { ...config };
   configChangeCb = onConfigChange;
@@ -63,27 +65,30 @@ export function initUI(
   flipCb = onFlip;
   explorerMoveClickCb = onExplorerMoveClick ?? null;
   continueCb = onContinue ?? null;
-  repertoireChangeCb = onRepertoireChange ?? null;
+  openingChangeCb = onRepertoireChange ?? null;
 
   renderSystemPicker();
   renderControls();
   renderConfigPanel();
 }
 
-type PickerMode = 'normal' | 'rename' | 'confirm-delete';
+type PickerMode = 'normal' | 'rename' | 'confirm-delete' | 'merge-select' | 'merge-confirm';
 let pickerMode: PickerMode = 'normal';
+let mergeTarget: string | null = null;
 
 export function renderSystemPicker(): void {
   const el = document.getElementById('system-picker')!;
   el.innerHTML = '';
 
-  const active = getActiveRepertoire();
+  const active = getActiveOpening();
   const isFreePlay = active === FREE_PLAY_NAME;
 
   if (pickerMode === 'rename' && !isFreePlay) {
     renderRenameMode(el, active);
   } else {
-    pickerMode = 'normal';
+    if (pickerMode !== 'merge-select' && pickerMode !== 'merge-confirm') {
+      pickerMode = 'normal';
+    }
     renderNormalMode(el, active, isFreePlay);
   }
 
@@ -126,6 +131,7 @@ const SVG_PLUS = '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2
 const SVG_GLOBE = '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
 const SVG_BOOK = '<svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>';
 
+const SVG_MERGE = '<svg viewBox="0 0 24 24"><path d="M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41zM7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5 7.5 8z"/></svg>';
 const SVG_CHEVRON = '<svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>';
 const SVG_CLOSE = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
 
@@ -143,7 +149,7 @@ function makeCardIcon(isFP: boolean): HTMLElement {
 }
 
 function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean): void {
-  const names = getRepertoireNames();
+  const names = getOpeningNames();
   const customRepertoires = names.filter(n => n !== FREE_PLAY_NAME);
   const isFreePlayActive = active === FREE_PLAY_NAME;
   const isFullRepActive = active === FULL_REPERTOIRE_NAME;
@@ -168,8 +174,8 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     fpCard.addEventListener('click', () => {
       deleteTarget = null;
       dropdownOpen = false;
-      switchRepertoire(FREE_PLAY_NAME);
-      repertoireChangeCb?.();
+      switchOpening(FREE_PLAY_NAME);
+      openingChangeCb?.();
       renderSystemPicker();
     });
   }
@@ -195,8 +201,8 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
       frCard.addEventListener('click', () => {
         deleteTarget = null;
         dropdownOpen = false;
-        switchRepertoire(FULL_REPERTOIRE_NAME);
-        repertoireChangeCb?.();
+        switchOpening(FULL_REPERTOIRE_NAME);
+        openingChangeCb?.();
         renderSystemPicker();
       });
     }
@@ -235,6 +241,21 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
         renderSystemPicker();
       });
 
+      const mergeBtn = document.createElement('button');
+      mergeBtn.className = 'system-icon-btn';
+      mergeBtn.title = 'Merge';
+      mergeBtn.innerHTML = SVG_MERGE;
+      const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
+      if (customCount < 2) {
+        mergeBtn.style.display = 'none';
+      }
+      mergeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pickerMode = 'merge-select';
+        dropdownOpen = true;
+        renderSystemPicker();
+      });
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'system-icon-btn danger';
       deleteBtn.title = 'Delete';
@@ -246,7 +267,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
         renderSystemPicker();
       });
 
-      actions.append(renameBtn, deleteBtn);
+      actions.append(renameBtn, mergeBtn, deleteBtn);
       card.append(actions);
     }
 
@@ -258,6 +279,9 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     card.addEventListener('click', () => {
       dropdownOpen = !dropdownOpen;
+      if (pickerMode === 'merge-select') {
+        pickerMode = 'normal';
+      }
       renderSystemPicker();
     });
 
@@ -265,49 +289,106 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     // Dropdown list
     if (dropdownOpen) {
+      // Close on click outside
+      requestAnimationFrame(() => {
+        const onClickOutside = (e: MouseEvent) => {
+          if (!wrapper.contains(e.target as Node)) {
+            dropdownOpen = false;
+            if (pickerMode === 'merge-select') pickerMode = 'normal';
+            document.removeEventListener('click', onClickOutside, true);
+            renderSystemPicker();
+          }
+        };
+        document.addEventListener('click', onClickOutside, true);
+      });
+
       const dropdown = document.createElement('div');
       dropdown.className = 'system-dropdown';
 
-      // "New opening" at the top
-      const addItem = document.createElement('div');
-      addItem.className = 'system-dropdown-item system-dropdown-add';
-      addItem.innerHTML = `${SVG_PLUS} <span class="system-card-name">New opening</span>`;
-      addItem.querySelector('svg')!.setAttribute('width', '16');
-      addItem.querySelector('svg')!.setAttribute('height', '16');
-      addItem.querySelector('svg')!.style.fill = 'currentColor';
-      addItem.addEventListener('click', () => {
-        dropdownOpen = false;
-        createRepertoire();
-        repertoireChangeCb?.();
-        pickerMode = 'rename';
-        renderSystemPicker();
-      });
-      dropdown.append(addItem);
+      if (pickerMode === 'merge-select') {
+        // Merge-select: header + list of merge targets + cancel
+        const header = document.createElement('div');
+        header.className = 'system-dropdown-header';
+        header.textContent = `Merge with…`;
+        dropdown.append(header);
 
-      // Show all custom systems except the active one
-      for (const name of customRepertoires) {
-        if (name === active && isCustomActive) continue;
-        const item = document.createElement('div');
-        item.className = 'system-dropdown-item';
+        const mergeTargets = customRepertoires.filter(n => n !== active);
+        for (const name of mergeTargets) {
+          const item = document.createElement('div');
+          item.className = 'system-dropdown-item';
 
-        const itemIcon = makeCardIcon(false);
-        itemIcon.className = 'system-card-icon custom';
-        item.append(itemIcon);
+          const itemIcon = makeCardIcon(false);
+          itemIcon.className = 'system-card-icon custom';
+          item.append(itemIcon);
 
-        const itemName = document.createElement('div');
-        itemName.className = 'system-card-name';
-        itemName.textContent = name;
-        item.append(itemName);
+          const itemName = document.createElement('div');
+          itemName.className = 'system-card-name';
+          itemName.textContent = name;
+          item.append(itemName);
 
-        item.addEventListener('click', () => {
-          deleteTarget = null;
+          item.addEventListener('click', () => {
+            mergeTarget = name;
+            dropdownOpen = false;
+            pickerMode = 'merge-confirm';
+            renderSystemPicker();
+          });
+          dropdown.append(item);
+        }
+
+        const cancelItem = document.createElement('div');
+        cancelItem.className = 'system-dropdown-item system-dropdown-cancel';
+        cancelItem.innerHTML = `${SVG_CLOSE} <span class="system-card-name">Cancel</span>`;
+        cancelItem.querySelector('svg')!.setAttribute('width', '14');
+        cancelItem.querySelector('svg')!.setAttribute('height', '14');
+        cancelItem.querySelector('svg')!.style.fill = 'currentColor';
+        cancelItem.addEventListener('click', () => {
           dropdownOpen = false;
-          switchRepertoire(name);
-          repertoireChangeCb?.();
+          mergeTarget = null;
+          pickerMode = 'normal';
           renderSystemPicker();
         });
+        dropdown.append(cancelItem);
+      } else {
+        // Normal dropdown: "New opening" + list of openings
+        const addItem = document.createElement('div');
+        addItem.className = 'system-dropdown-item system-dropdown-add';
+        addItem.innerHTML = `${SVG_PLUS} <span class="system-card-name">New opening</span>`;
+        addItem.querySelector('svg')!.setAttribute('width', '16');
+        addItem.querySelector('svg')!.setAttribute('height', '16');
+        addItem.querySelector('svg')!.style.fill = 'currentColor';
+        addItem.addEventListener('click', () => {
+          dropdownOpen = false;
+          createOpening();
+          openingChangeCb?.();
+          pickerMode = 'rename';
+          renderSystemPicker();
+        });
+        dropdown.append(addItem);
 
-        dropdown.append(item);
+        for (const name of customRepertoires) {
+          if (name === active && isCustomActive) continue;
+          const item = document.createElement('div');
+          item.className = 'system-dropdown-item';
+
+          const itemIcon = makeCardIcon(false);
+          itemIcon.className = 'system-card-icon custom';
+          item.append(itemIcon);
+
+          const itemName = document.createElement('div');
+          itemName.className = 'system-card-name';
+          itemName.textContent = name;
+          item.append(itemName);
+
+          item.addEventListener('click', () => {
+            deleteTarget = null;
+            dropdownOpen = false;
+            switchOpening(name);
+            openingChangeCb?.();
+            renderSystemPicker();
+          });
+
+          dropdown.append(item);
+        }
       }
 
       wrapper.append(dropdown);
@@ -327,10 +408,10 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     yesBtn.className = 'btn-confirm-yes';
     yesBtn.textContent = 'Delete';
     yesBtn.addEventListener('click', () => {
-      deleteRepertoire(deleteTarget!);
+      deleteOpening(deleteTarget!);
       deleteTarget = null;
       pickerMode = 'normal';
-      repertoireChangeCb?.();
+      openingChangeCb?.();
       renderSystemPicker();
     });
 
@@ -343,6 +424,51 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     });
 
     banner.append(txt, yesBtn, noBtn);
+    el.append(banner);
+  }
+
+  // Merge-confirm banner
+  if (pickerMode === 'merge-confirm' && mergeTarget) {
+    const banner = document.createElement('div');
+    banner.className = 'system-confirm-merge';
+
+    const txt = document.createElement('span');
+    txt.textContent = `Merge "${active}" + "${mergeTarget}"`;
+    banner.append(txt);
+
+    const strategies: { strategy: MergeStrategy; label: string }[] = [
+      { strategy: 'into-a', label: `Keep "${active}"` },
+      { strategy: 'into-b', label: `Keep "${mergeTarget}"` },
+      { strategy: 'as-new', label: 'New opening' },
+    ];
+
+    const btnGroup = document.createElement('div');
+    btnGroup.className = 'merge-btn-group';
+    for (const { strategy, label } of strategies) {
+      const btn = document.createElement('button');
+      btn.className = 'btn-confirm-yes merge';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        mergeOpenings(active, mergeTarget!, strategy);
+        mergeTarget = null;
+        pickerMode = 'normal';
+        openingChangeCb?.();
+        renderSystemPicker();
+      });
+      btnGroup.append(btn);
+    }
+    banner.append(btnGroup);
+
+    const noBtn = document.createElement('button');
+    noBtn.className = 'btn-confirm-no';
+    noBtn.textContent = 'Cancel';
+    noBtn.addEventListener('click', () => {
+      mergeTarget = null;
+      pickerMode = 'normal';
+      renderSystemPicker();
+    });
+    banner.append(noBtn);
+
     el.append(banner);
   }
 
@@ -389,8 +515,8 @@ function renderRenameMode(el: HTMLElement, active: string): void {
   function save(): void {
     const newName = input.value.trim();
     if (newName && newName !== active) {
-      renameRepertoire(active, newName);
-      repertoireChangeCb?.();
+      renameOpening(active, newName);
+      openingChangeCb?.();
     }
     pickerMode = 'normal';
     renderSystemPicker();
@@ -417,6 +543,7 @@ function renderRenameMode(el: HTMLElement, active: string): void {
     input.select();
   });
 }
+
 
 const MODE_OPTIONS: { value: PlayerColor; label: string }[] = [
   { value: 'white', label: 'White' },
@@ -948,7 +1075,7 @@ export function updateMoveList(): void {
 
   function lockLineToRepertoire(forceNew: boolean): void {
     if (forceNew) {
-      createRepertoire();
+      createOpening();
       renderSystemPicker();
     }
     const upTo = isViewingHistory() ? vi : history.length;
@@ -960,7 +1087,7 @@ export function updateMoveList(): void {
     if (repertoireCreated && !forceNew) {
       renderSystemPicker();
     }
-    repertoireChangeCb?.();
+    openingChangeCb?.();
     updateExplorerPanel();
     updateMoveList();
   }
@@ -1168,10 +1295,24 @@ export function updateExplorerPanel(): void {
       } else {
         if (lockMove(fen, uci)) {
           renderSystemPicker();
-          repertoireChangeCb?.();
+          openingChangeCb?.();
         }
       }
       updateExplorerPanel();
+    });
+  });
+
+  // Hover arrows — show move on board when hovering explorer rows
+  el.querySelectorAll('.explorer-move:not(.empty-row)').forEach((row) => {
+    row.addEventListener('mouseenter', () => {
+      const uci = (row as HTMLElement).dataset.uci;
+      if (!uci || uci.length < 4) return;
+      const orig = uci.slice(0, 2) as Key;
+      const dest = uci.slice(2, 4) as Key;
+      setAutoShapes([{ orig, dest, brush: 'blue' }]);
+    });
+    row.addEventListener('mouseleave', () => {
+      setAutoShapes([]);
     });
   });
 
@@ -1323,7 +1464,7 @@ function doPgnImport(): void {
   renderSystemPicker();
   updateExplorerPanel();
   updateMoveList();
-  repertoireChangeCb?.();
+  openingChangeCb?.();
 
   setTimeout(closePgnModal, 1500);
 }

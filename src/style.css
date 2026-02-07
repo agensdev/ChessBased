@@ -588,6 +588,88 @@ cg-board square.selected {
   background: var(--bg-hover);
 }
 
+/* Merge dropdown header */
+.system-dropdown-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 6px 10px 4px;
+}
+
+.system-dropdown-cancel {
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+.system-dropdown-cancel:hover {
+  color: var(--text-secondary);
+}
+
+.system-dropdown-cancel:hover .system-card-name {
+  color: var(--text-secondary);
+}
+
+/* Merge confirm banner */
+.system-confirm-merge {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--accent-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.merge-btn-group {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-confirm-yes.merge {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid rgba(91, 127, 199, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(91, 127, 199, 0.15);
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background var(--transition-fast);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-confirm-yes.merge:hover {
+  background: rgba(91, 127, 199, 0.3);
+}
+
+.system-confirm-merge .btn-confirm-no {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--transition-fast);
+  align-self: flex-start;
+}
+
+.system-confirm-merge .btn-confirm-no:hover {
+  background: var(--bg-hover);
+}
+
 /* ── Status ── */
 .opening-name {
   font-family: var(--font-display);

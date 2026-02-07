@@ -4,7 +4,7 @@ import type { Position } from 'chessops';
 import { parseSan } from 'chessops/san';
 import { makeFen } from 'chessops/fen';
 import { makeUci } from 'chessops';
-import { lockMove, positionKey, createRepertoire, switchRepertoire } from './repertoire';
+import { lockMove, positionKey, createOpening, switchOpening } from './repertoire';
 
 /** Extract study ID from a Lichess study URL */
 function parseStudyId(url: string): string | null {
@@ -107,7 +107,7 @@ export function importPgn(pgn: string): ImportResult {
 
   if (isSingleOpening) {
     const name = distinctNames[0] || undefined;
-    const openingName = createRepertoire(name);
+    const openingName = createOpening(name);
     openingNames.push(openingName);
     const result = importGames(allGames, new Set());
     totalMoves = result.moves;
@@ -116,7 +116,7 @@ export function importPgn(pgn: string): ImportResult {
   } else {
     // Multiple distinct events → create one opening per event
     for (const [name, games] of groups) {
-      const openingName = createRepertoire(name || undefined);
+      const openingName = createOpening(name || undefined);
       openingNames.push(openingName);
       const result = importGames(games, new Set());
       totalMoves += result.moves;
@@ -127,7 +127,7 @@ export function importPgn(pgn: string): ImportResult {
 
   // Switch to the last created opening
   if (openingNames.length > 0) {
-    switchRepertoire(openingNames[openingNames.length - 1]);
+    switchOpening(openingNames[openingNames.length - 1]);
   }
 
   return {
