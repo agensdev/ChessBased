@@ -1,6 +1,7 @@
 import type { RepertoireEntry } from './types';
 
 export const FREE_PLAY_NAME = 'Free play';
+export const FULL_REPERTOIRE_NAME = 'Full repertoire';
 
 const STORAGE_KEY = 'chessbased-systems';
 
@@ -17,7 +18,27 @@ function getStore(): RepertoireStore {
   return data.systems[data.active] ?? {};
 }
 
+function getMergedStore(): RepertoireStore {
+  const merged: RepertoireStore = {};
+  for (const [name, store] of Object.entries(data.systems)) {
+    if (name === FREE_PLAY_NAME) continue;
+    for (const [key, entry] of Object.entries(store)) {
+      if (!merged[key]) {
+        merged[key] = { lockedMoves: [...entry.lockedMoves] };
+      } else {
+        for (const uci of entry.lockedMoves) {
+          if (!merged[key].lockedMoves.includes(uci)) {
+            merged[key].lockedMoves.push(uci);
+          }
+        }
+      }
+    }
+  }
+  return merged;
+}
+
 export function getActiveStore(): Readonly<RepertoireStore> {
+  if (data.active === FULL_REPERTOIRE_NAME) return getMergedStore();
   return getStore();
 }
 
@@ -61,13 +82,17 @@ function persist(): void {
 
 export function getLockedMoves(fen: string): string[] {
   if (data.active === FREE_PLAY_NAME) return [];
+  if (data.active === FULL_REPERTOIRE_NAME) {
+    const key = positionKey(fen);
+    return getMergedStore()[key]?.lockedMoves ?? [];
+  }
   const key = positionKey(fen);
   return getStore()[key]?.lockedMoves ?? [];
 }
 
 export function lockMove(fen: string, uci: string): boolean {
   let createdRepertoire = false;
-  if (data.active === FREE_PLAY_NAME) {
+  if (data.active === FREE_PLAY_NAME || data.active === FULL_REPERTOIRE_NAME) {
     createRepertoire();
     createdRepertoire = true;
   }
@@ -84,7 +109,7 @@ export function lockMove(fen: string, uci: string): boolean {
 }
 
 export function unlockMove(fen: string, uci: string): void {
-  if (data.active === FREE_PLAY_NAME) return;
+  if (data.active === FREE_PLAY_NAME || data.active === FULL_REPERTOIRE_NAME) return;
   const store = getStore();
   const key = positionKey(fen);
   if (!store[key]) return;
@@ -109,7 +134,16 @@ export function getActiveRepertoire(): string {
   return data.active;
 }
 
+export function getStoreByName(name: string): Readonly<RepertoireStore> {
+  return data.systems[name] ?? {};
+}
+
 export function switchRepertoire(name: string): void {
+  if (name === FULL_REPERTOIRE_NAME) {
+    data.active = name;
+    persist();
+    return;
+  }
   if (!data.systems[name]) return;
   data.active = name;
   persist();
@@ -133,7 +167,7 @@ function generateUniqueName(): string {
 }
 
 export function deleteRepertoire(name: string): void {
-  if (name === FREE_PLAY_NAME) return;
+  if (name === FREE_PLAY_NAME || name === FULL_REPERTOIRE_NAME) return;
   if (!data.systems[name]) return;
   delete data.systems[name];
   if (data.active === name) {
@@ -143,9 +177,9 @@ export function deleteRepertoire(name: string): void {
 }
 
 export function renameRepertoire(oldName: string, newName: string): boolean {
-  if (oldName === FREE_PLAY_NAME) return false;
+  if (oldName === FREE_PLAY_NAME || oldName === FULL_REPERTOIRE_NAME) return false;
   const trimmed = newName.trim();
-  if (!trimmed || trimmed === FREE_PLAY_NAME) return false;
+  if (!trimmed || trimmed === FREE_PLAY_NAME || trimmed === FULL_REPERTOIRE_NAME) return false;
   if (!data.systems[oldName] || data.systems[trimmed]) return false;
   data.systems[trimmed] = data.systems[oldName];
   delete data.systems[oldName];

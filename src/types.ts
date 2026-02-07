@@ -47,6 +47,7 @@ export interface AppConfig {
   botMinPlayRatePct: number;
   enabledAlerts: AlertType[];
   showMoveBadges: boolean;
+  showExplorer: boolean;
   alertThresholds: AlertThresholds;
 }
 
@@ -55,11 +56,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   speeds: ['blitz', 'rapid', 'classical'],
   topMoves: 5,
   playerColor: 'white',
-  showEval: true,
+  showEval: false,
   botWeighting: 'weighted',
   botMinPlayRatePct: 5,
-  enabledAlerts: ['danger', 'opportunity', 'trap'],
-  showMoveBadges: true,
+  enabledAlerts: [],
+  showMoveBadges: false,
+  showExplorer: false,
   alertThresholds: { ...DEFAULT_THRESHOLDS },
 };
 

@@ -16,8 +16,10 @@ import {
   isMoveLocked, lockMove, unlockMove, getLockedMoves,
   getRepertoireNames, getActiveRepertoire, switchRepertoire, createRepertoire, deleteRepertoire, renameRepertoire,
   FREE_PLAY_NAME,
+  FULL_REPERTOIRE_NAME,
 } from './repertoire';
-import { importPgn } from './pgn-import';
+import { importPgn, fetchStudyPgn } from './pgn-import';
+import { exportActiveOpening, exportAll } from './pgn-export';
 import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
 
@@ -44,6 +46,7 @@ let nextMoveUci: string | null = null;
 
 // Current engine eval as win% for the side to move (0-100), null if unavailable
 let currentEvalWinPct: number | null = null;
+
 
 export function initUI(
   config: AppConfig,
@@ -84,12 +87,36 @@ export function renderSystemPicker(): void {
     renderNormalMode(el, active, isFreePlay);
   }
 
-  // Import PGN link
+  // Import / Export buttons
+  const btnRow = document.createElement('div');
+  btnRow.className = 'repertoire-btn-row';
+
   const importBtn = document.createElement('button');
   importBtn.className = 'import-pgn-btn';
   importBtn.textContent = 'Import PGN';
   importBtn.addEventListener('click', () => openPgnModal());
-  el.append(importBtn);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className = 'import-pgn-btn';
+  exportBtn.textContent = 'Copy opening PGN';
+  exportBtn.disabled = isFreePlay;
+  exportBtn.addEventListener('click', () => {
+    const pgn = exportActiveOpening();
+    if (!pgn) return;
+    navigator.clipboard.writeText(pgn).then(() => {
+      const orig = exportBtn.textContent;
+      exportBtn.textContent = 'Copied!';
+      setTimeout(() => { exportBtn.textContent = orig; }, 1500);
+    });
+  });
+
+  const exportAllBtn = document.createElement('button');
+  exportAllBtn.className = 'import-pgn-btn';
+  exportAllBtn.textContent = 'Export all';
+  exportAllBtn.addEventListener('click', () => downloadPgn(exportAll(), 'repertoire.pgn'));
+
+  btnRow.append(importBtn, exportBtn, exportAllBtn);
+  el.append(btnRow);
 }
 
 const SVG_CHECK = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
@@ -119,6 +146,8 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   const names = getRepertoireNames();
   const customRepertoires = names.filter(n => n !== FREE_PLAY_NAME);
   const isFreePlayActive = active === FREE_PLAY_NAME;
+  const isFullRepActive = active === FULL_REPERTOIRE_NAME;
+  const isCustomActive = !isFreePlayActive && !isFullRepActive;
 
   // ── Free Play card ──
   const fpCard = document.createElement('div');
@@ -146,9 +175,36 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   }
   el.append(fpCard);
 
+  // ── Full repertoire card ──
+  if (customRepertoires.length > 1) {
+    const frCard = document.createElement('div');
+    frCard.className = `system-card${isFullRepActive ? ' active' : ''}`;
+    frCard.append(makeCardIcon(false));
+
+    const frName = document.createElement('div');
+    frName.className = 'system-card-name';
+    frName.textContent = FULL_REPERTOIRE_NAME;
+    frCard.append(frName);
+
+    const frCheck = document.createElement('div');
+    frCheck.className = 'system-card-check';
+    frCheck.innerHTML = SVG_CHECK;
+    frCard.append(frCheck);
+
+    if (!isFullRepActive) {
+      frCard.addEventListener('click', () => {
+        deleteTarget = null;
+        dropdownOpen = false;
+        switchRepertoire(FULL_REPERTOIRE_NAME);
+        repertoireChangeCb?.();
+        renderSystemPicker();
+      });
+    }
+    el.append(frCard);
+  }
+
   // ── Custom system card (with dropdown) ──
   {
-    const isCustomActive = !isFreePlayActive;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'system-dropdown-anchor';
@@ -160,7 +216,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     const nameEl = document.createElement('div');
     nameEl.className = 'system-card-name';
-    nameEl.textContent = isCustomActive ? active : 'Repertoires';
+    nameEl.textContent = isCustomActive ? active : 'Openings';
     card.append(nameEl);
 
     // Actions: edit + delete (only when a custom system is active)
@@ -212,10 +268,10 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
       const dropdown = document.createElement('div');
       dropdown.className = 'system-dropdown';
 
-      // "New repertoire" at the top
+      // "New opening" at the top
       const addItem = document.createElement('div');
       addItem.className = 'system-dropdown-item system-dropdown-add';
-      addItem.innerHTML = `${SVG_PLUS} <span class="system-card-name">New repertoire</span>`;
+      addItem.innerHTML = `${SVG_PLUS} <span class="system-card-name">New opening</span>`;
       addItem.querySelector('svg')!.setAttribute('width', '16');
       addItem.querySelector('svg')!.setAttribute('height', '16');
       addItem.querySelector('svg')!.style.fill = 'currentColor';
@@ -313,7 +369,7 @@ function renderRenameMode(el: HTMLElement, active: string): void {
   input.type = 'text';
   input.className = 'system-rename-input';
   input.value = active;
-  input.placeholder = 'Repertoire name...';
+  input.placeholder = 'Opening name...';
 
   const saveBtn = document.createElement('button');
   saveBtn.className = 'system-icon-btn';
@@ -460,7 +516,8 @@ function renderConfigPanel(): void {
   indicatorTooltip.className = 'info-tooltip';
   indicatorTooltip.innerHTML =
     '<b>Eval bar</b> — Stockfish evaluation shown as a vertical bar next to the board.<br>' +
-    '<b>Move badges</b> — Marks on moves: <b>!</b> for best move, <b>?</b> for blunders, <b>?!</b> for traps.';
+    '<b>Move badges</b> — Marks on moves: <b>!</b> for best move, <b>?</b> for blunders, <b>?!</b> for traps.<br>' +
+    '<b>Always show explorer</b> — Show explorer moves even during training (normally hidden until you click).';
   indicatorInfo.append(indicatorTooltip);
   indicatorHeader.append(indicatorInfo);
 
@@ -485,7 +542,16 @@ function renderConfigPanel(): void {
     configChangeCb(currentConfig);
   });
 
-  displayGrid.append(evalChip, badgesChip);
+  const explorerChip = document.createElement('button');
+  explorerChip.className = `chip${currentConfig.showExplorer ? ' selected' : ''}`;
+  explorerChip.textContent = 'Always show explorer';
+  explorerChip.addEventListener('click', () => {
+    const isOn = explorerChip.classList.toggle('selected');
+    currentConfig.showExplorer = isOn;
+    configChangeCb(currentConfig);
+  });
+
+  displayGrid.append(evalChip, badgesChip, explorerChip);
   indicatorSection.append(indicatorHeader, displayGrid);
 
   // ── Alerts section ──
@@ -778,7 +844,7 @@ export function updateStatus(phase: GamePhase, openingName?: string): void {
     }
     if (repMoves > 0) {
       const pct = Math.round((repMoves / history.length) * 100);
-      text += `<div class="rep-depth"><span class="rep-depth-bar" style="width:${pct}%"></span><span class="rep-depth-label">${repMoves}/${history.length} moves in repertoire</span></div>`;
+      text += `<div class="rep-depth"><span class="rep-depth-bar" style="width:${pct}%"></span><span class="rep-depth-label">${repMoves}/${history.length} moves in opening</span></div>`;
     }
   }
 
@@ -871,8 +937,8 @@ export function updateMoveList(): void {
   if (isViewingHistory() && continueCb) {
     actionsHtml += '<button class="btn continue-btn">Continue from here</button>';
   }
-  actionsHtml += '<button class="btn lock-line-btn">Lock line</button>';
-  actionsHtml += '<button class="btn lock-line-new-btn">Lock to new</button>';
+  actionsHtml += '<button class="btn lock-line-btn">Add line</button>';
+  actionsHtml += '<button class="btn lock-line-new-btn">Add to new</button>';
   actionsEl.innerHTML = actionsHtml;
 
   const continueBtn = actionsEl.querySelector('.continue-btn');
@@ -1075,7 +1141,7 @@ export function updateExplorerPanel(): void {
       </span>
       <button class="lock-btn ${locked ? 'locked' : ''}"
               data-uci="${move.uci}" data-fen="${encodeURIComponent(fen)}"
-              title="${locked ? 'Unlock this move' : 'Lock this move'}">
+              title="${locked ? 'Remove from opening' : 'Add to opening'}">
         ${locked
           ? '<svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>'
           : '<svg viewBox="0 0 24 24"><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"/></svg>'
@@ -1130,6 +1196,17 @@ function badgeSymbol(badge: MoveBadge): string {
   }
 }
 
+function downloadPgn(pgn: string, filename: string): void {
+  if (!pgn) return;
+  const blob = new Blob([pgn], { type: 'application/x-chess-pgn' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function formatGames(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -1148,6 +1225,10 @@ function initPgnModal(): void {
   document.getElementById('pgn-modal-overlay')!.addEventListener('click', closePgnModal);
   document.getElementById('pgn-cancel-btn')!.addEventListener('click', closePgnModal);
   document.getElementById('pgn-import-btn')!.addEventListener('click', doPgnImport);
+  document.getElementById('study-fetch-btn')!.addEventListener('click', doStudyFetch);
+  document.getElementById('study-url-input')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doStudyFetch();
+  });
 }
 
 function openPgnModal(): void {
@@ -1158,6 +1239,7 @@ function openPgnModal(): void {
   const result = document.getElementById('pgn-result')!;
 
   textarea.value = '';
+  (document.getElementById('study-url-input') as HTMLInputElement).value = '';
   result.textContent = '';
   result.className = 'pgn-result';
 
@@ -1174,6 +1256,38 @@ function closePgnModal(): void {
   overlay.classList.remove('visible');
   overlay.classList.add('hidden');
   modal.classList.add('hidden');
+}
+
+async function doStudyFetch(): Promise<void> {
+  const input = document.getElementById('study-url-input') as HTMLInputElement;
+  const resultEl = document.getElementById('pgn-result')!;
+  const textarea = document.getElementById('pgn-textarea') as HTMLTextAreaElement;
+  const btn = document.getElementById('study-fetch-btn') as HTMLButtonElement;
+  const url = input.value.trim();
+
+  if (!url) {
+    resultEl.textContent = 'Please enter a Lichess study URL.';
+    resultEl.className = 'pgn-result error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  resultEl.textContent = '';
+  resultEl.className = 'pgn-result';
+
+  try {
+    const pgn = await fetchStudyPgn(url);
+    textarea.value = pgn;
+    resultEl.textContent = 'Study loaded — click Import to create a new opening.';
+    resultEl.className = 'pgn-result success';
+  } catch (e: unknown) {
+    resultEl.textContent = e instanceof Error ? e.message : 'Failed to fetch study';
+    resultEl.className = 'pgn-result error';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch';
+  }
 }
 
 function doPgnImport(): void {
@@ -1195,7 +1309,10 @@ function doPgnImport(): void {
     return;
   }
 
-  let msg = `Imported ${result.moves} move${result.moves !== 1 ? 's' : ''} across ${result.positions} position${result.positions !== 1 ? 's' : ''}.`;
+  const nameStr = result.openingNames.length === 1
+    ? `"${result.openingNames[0]}"`
+    : `${result.openingNames.length} openings`;
+  let msg = `Created ${nameStr} with ${result.moves} move${result.moves !== 1 ? 's' : ''} across ${result.positions} position${result.positions !== 1 ? 's' : ''}.`;
   if (result.errors.length > 0) {
     msg += ` (${result.errors.length} error${result.errors.length !== 1 ? 's' : ''} skipped)`;
   }

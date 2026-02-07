@@ -22,6 +22,10 @@ export function buildRepertoireTree(): TreeNode[] {
   return buildChildren(STARTING_FEN, 1, false, store, visited);
 }
 
+export function buildTreeFromStore(store: Readonly<Record<string, { lockedMoves: string[] }>>): TreeNode[] {
+  return buildChildren(STARTING_FEN, 1, false, store, new Set());
+}
+
 function buildChildren(
   fen: string,
   moveNumber: number,

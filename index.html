@@ -56,6 +56,11 @@
         <button id="pgn-modal-close" class="drawer-close-btn">&times;</button>
       </div>
       <div class="pgn-modal-body">
+        <div class="study-url-row">
+          <input id="study-url-input" type="text" placeholder="Lichess study URL (e.g. lichess.org/study/abc123)" />
+          <button id="study-fetch-btn" class="btn btn-primary">Fetch</button>
+        </div>
+        <div class="pgn-separator"><span>or paste PGN directly</span></div>
         <textarea id="pgn-textarea" placeholder="Paste PGN here...&#10;&#10;Example:&#10;1. e4 e5 2. Nf3 Nc6 3. Bb5 a6"></textarea>
         <div id="pgn-result" class="pgn-result"></div>
         <div class="pgn-modal-actions">

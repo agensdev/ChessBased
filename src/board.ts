@@ -6,6 +6,7 @@ import { chessgroundDests } from 'chessops/compat';
 import { makeFen, parseFen } from 'chessops/fen';
 import { makeSan } from 'chessops/san';
 import type { MoveHistoryEntry } from './types';
+import { playMoveSound } from './sound';
 
 export interface BoardState {
   cg: Api;
@@ -95,6 +96,7 @@ function handleUserMove(orig: Key, dest: Key): void {
   if (!move) return;
 
   const san = makeSan(chess, move);
+  playMoveSound(san.includes('x'));
   chess.play(move);
 
   const fen = makeFen(chess.toSetup());
@@ -119,6 +121,7 @@ export function playBotMove(uci: string): MoveHistoryEntry | null {
   if (!move) return null;
 
   const san = makeSan(chess, move);
+  playMoveSound(san.includes('x'));
 
   if (!isNormal(move)) return null;
 

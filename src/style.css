@@ -1486,6 +1486,26 @@ input[type='range']::-moz-range-track {
 }
 
 /* ── Tree View ── */
+#tree-panel {
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.tree-toolbar {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.tree-toolbar .btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
 .tree-lines {
   display: flex;
   flex-direction: column;
@@ -1496,6 +1516,68 @@ input[type='range']::-moz-range-track {
   display: flex;
   align-items: center;
   min-height: 28px;
+}
+
+.tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.tree-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.tree-toggle svg {
+  fill: var(--text-dim);
+  transition: transform var(--transition-fast);
+  transform: rotate(90deg);
+}
+
+.tree-line.collapsed .tree-toggle svg {
+  transform: rotate(0deg);
+}
+
+.tree-toggle-spacer {
+  display: inline-block;
+  width: 18px;
+  flex-shrink: 0;
+}
+
+.tree-expand-sub {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.tree-line:hover .tree-expand-sub {
+  opacity: 0.5;
+}
+
+.tree-line:hover .tree-expand-sub:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+.tree-expand-sub svg {
+  fill: var(--text-dim);
+}
+
+.tree-children.collapsed {
+  display: none;
 }
 
 .tree-move {
@@ -1572,6 +1654,61 @@ input[type='range']::-moz-range-track {
   gap: 12px;
 }
 
+.study-url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.study-url-row input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.study-url-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91, 127, 199, 0.2);
+}
+
+.study-url-row input::placeholder {
+  color: var(--text-dim);
+}
+
+.study-url-row .btn {
+  flex-shrink: 0;
+}
+
+.pgn-separator {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  position: relative;
+}
+
+.pgn-separator span {
+  background: var(--bg-card);
+  padding: 0 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.pgn-separator::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+
 #pgn-textarea {
   width: 100%;
   min-height: 180px;
@@ -1616,7 +1753,12 @@ input[type='range']::-moz-range-track {
   justify-content: flex-end;
 }
 
-/* Import PGN link-button in system picker */
+.repertoire-btn-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .import-pgn-btn {
   background: none;
   border: none;
@@ -1630,8 +1772,13 @@ input[type='range']::-moz-range-track {
   transition: color var(--transition-fast);
 }
 
-.import-pgn-btn:hover {
+.import-pgn-btn:hover:not(:disabled) {
   color: var(--accent);
+}
+
+.import-pgn-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* ── Responsive ── */

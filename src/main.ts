@@ -86,7 +86,7 @@ function requestEval(fen: string): void {
 }
 
 function refreshExplorerMode(): void {
-  setExplorerAlwaysShow(config.playerColor === 'both' || isViewingHistory());
+  setExplorerAlwaysShow(config.playerColor === 'both' || isViewingHistory() || config.showExplorer);
 }
 
 function refreshTreeIfVisible(): void {
