@@ -21,6 +21,7 @@ import {
 } from './repertoire';
 import type { MergeStrategy } from './repertoire';
 import { importPgn, fetchStudyPgn } from './pgn-import';
+import { initLibraryModal, openLibraryModal } from './opening-library';
 import { exportActiveOpening, exportAll } from './pgn-export';
 import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
@@ -92,18 +93,37 @@ export function renderSystemPicker(): void {
     renderNormalMode(el, active, isFreePlay);
   }
 
-  // Import / Export buttons
-  const btnRow = document.createElement('div');
-  btnRow.className = 'repertoire-btn-row';
+  // Primary action buttons
+  const primaryRow = document.createElement('div');
+  primaryRow.className = 'repertoire-primary-row';
+
+  const libraryBtn = document.createElement('button');
+  libraryBtn.className = 'repertoire-action-btn';
+  libraryBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> Browse openings';
+  libraryBtn.addEventListener('click', () => {
+    initLibraryModal(() => {
+      renderSystemPicker();
+      updateExplorerPanel();
+      updateMoveList();
+      openingChangeCb?.();
+    });
+    openLibraryModal();
+  });
 
   const importBtn = document.createElement('button');
-  importBtn.className = 'import-pgn-btn';
-  importBtn.textContent = 'Import PGN';
+  importBtn.className = 'repertoire-action-btn';
+  importBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Import PGN';
   importBtn.addEventListener('click', () => openPgnModal());
+
+  primaryRow.append(libraryBtn, importBtn);
+
+  // Secondary links
+  const linkRow = document.createElement('div');
+  linkRow.className = 'repertoire-btn-row';
 
   const exportBtn = document.createElement('button');
   exportBtn.className = 'import-pgn-btn';
-  exportBtn.textContent = 'Copy opening PGN';
+  exportBtn.textContent = 'Copy PGN';
   exportBtn.disabled = isFreePlay;
   exportBtn.addEventListener('click', () => {
     const pgn = exportActiveOpening();
@@ -117,11 +137,12 @@ export function renderSystemPicker(): void {
 
   const exportAllBtn = document.createElement('button');
   exportAllBtn.className = 'import-pgn-btn';
-  exportAllBtn.textContent = 'Export all';
+  exportAllBtn.textContent = 'Export repertoire';
   exportAllBtn.addEventListener('click', () => downloadPgn(exportAll(), 'repertoire.pgn'));
 
-  btnRow.append(importBtn, exportBtn, exportAllBtn);
-  el.append(btnRow);
+  linkRow.append(exportBtn, exportAllBtn);
+
+  el.append(primaryRow, linkRow);
 }
 
 const SVG_CHECK = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
@@ -131,6 +152,7 @@ const SVG_PLUS = '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2
 const SVG_GLOBE = '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
 const SVG_BOOK = '<svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>';
 
+const SVG_LAYERS = '<svg viewBox="0 0 24 24"><path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z"/></svg>';
 const SVG_MERGE = '<svg viewBox="0 0 24 24"><path d="M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41zM7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5 7.5 8z"/></svg>';
 const SVG_CHEVRON = '<svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>';
 const SVG_CLOSE = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
@@ -138,10 +160,11 @@ const SVG_CLOSE = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6
 let deleteTarget: string | null = null;
 let dropdownOpen = false;
 
-function makeCardIcon(isFP: boolean): HTMLElement {
+function makeCardIcon(type: 'free-play' | 'full-rep' | 'custom'): HTMLElement {
   const icon = document.createElement('div');
-  icon.className = `system-card-icon ${isFP ? 'free-play' : 'custom'}`;
-  icon.innerHTML = isFP ? SVG_GLOBE : SVG_BOOK;
+  icon.className = `system-card-icon ${type}`;
+  const svgMap = { 'free-play': SVG_GLOBE, 'full-rep': SVG_LAYERS, 'custom': SVG_BOOK };
+  icon.innerHTML = svgMap[type];
   icon.querySelector('svg')!.setAttribute('width', '16');
   icon.querySelector('svg')!.setAttribute('height', '16');
   icon.querySelector('svg')!.style.fill = 'currentColor';
@@ -155,99 +178,44 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   const isFullRepActive = active === FULL_REPERTOIRE_NAME;
   const isCustomActive = !isFreePlayActive && !isFullRepActive;
 
-  // ── Free Play card ──
-  const fpCard = document.createElement('div');
-  fpCard.className = `system-card${isFreePlayActive ? ' active' : ''}`;
-  fpCard.append(makeCardIcon(true));
+  // ── Single dropdown card ──
+  const wrapper = document.createElement('div');
+  wrapper.className = 'system-dropdown-anchor';
 
-  const fpName = document.createElement('div');
-  fpName.className = 'system-card-name';
-  fpName.textContent = FREE_PLAY_NAME;
-  fpCard.append(fpName);
+  const card = document.createElement('div');
+  card.className = 'system-card active';
 
-  const fpCheck = document.createElement('div');
-  fpCheck.className = 'system-card-check';
-  fpCheck.innerHTML = SVG_CHECK;
-  fpCard.append(fpCheck);
+  const activeIconType = isFreePlayActive ? 'free-play' : isFullRepActive ? 'full-rep' : 'custom';
+  card.append(makeCardIcon(activeIconType));
 
-  if (!isFreePlayActive) {
-    fpCard.addEventListener('click', () => {
-      deleteTarget = null;
+  const nameEl = document.createElement('div');
+  nameEl.className = 'system-card-name';
+  nameEl.textContent = active;
+  card.append(nameEl);
+
+  // Actions: edit + delete (only when a custom opening is active)
+  if (isCustomActive) {
+    const actions = document.createElement('div');
+    actions.className = 'system-card-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'system-icon-btn';
+    renameBtn.title = 'Rename';
+    renameBtn.innerHTML = SVG_EDIT;
+    renameBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       dropdownOpen = false;
-      switchOpening(FREE_PLAY_NAME);
-      openingChangeCb?.();
+      pickerMode = 'rename';
       renderSystemPicker();
     });
-  }
-  el.append(fpCard);
 
-  // ── Full repertoire card ──
-  if (customRepertoires.length > 1) {
-    const frCard = document.createElement('div');
-    frCard.className = `system-card${isFullRepActive ? ' active' : ''}`;
-    frCard.append(makeCardIcon(false));
-
-    const frName = document.createElement('div');
-    frName.className = 'system-card-name';
-    frName.textContent = FULL_REPERTOIRE_NAME;
-    frCard.append(frName);
-
-    const frCheck = document.createElement('div');
-    frCheck.className = 'system-card-check';
-    frCheck.innerHTML = SVG_CHECK;
-    frCard.append(frCheck);
-
-    if (!isFullRepActive) {
-      frCard.addEventListener('click', () => {
-        deleteTarget = null;
-        dropdownOpen = false;
-        switchOpening(FULL_REPERTOIRE_NAME);
-        openingChangeCb?.();
-        renderSystemPicker();
-      });
-    }
-    el.append(frCard);
-  }
-
-  // ── Custom system card (with dropdown) ──
-  {
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'system-dropdown-anchor';
-
-    const card = document.createElement('div');
-    card.className = `system-card${isCustomActive ? ' active' : ''}`;
-
-    card.append(makeCardIcon(false));
-
-    const nameEl = document.createElement('div');
-    nameEl.className = 'system-card-name';
-    nameEl.textContent = isCustomActive ? active : 'Openings';
-    card.append(nameEl);
-
-    // Actions: edit + delete (only when a custom system is active)
-    if (isCustomActive) {
-      const actions = document.createElement('div');
-      actions.className = 'system-card-actions';
-
-      const renameBtn = document.createElement('button');
-      renameBtn.className = 'system-icon-btn';
-      renameBtn.title = 'Rename';
-      renameBtn.innerHTML = SVG_EDIT;
-      renameBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdownOpen = false;
-        pickerMode = 'rename';
-        renderSystemPicker();
-      });
-
-      const mergeBtn = document.createElement('button');
-      mergeBtn.className = 'system-icon-btn';
-      mergeBtn.title = 'Merge';
-      mergeBtn.innerHTML = SVG_MERGE;
-      const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
-      if (customCount < 2) {
-        mergeBtn.style.display = 'none';
+    const mergeBtn = document.createElement('button');
+    mergeBtn.className = 'system-icon-btn';
+    mergeBtn.title = 'Merge';
+    mergeBtn.innerHTML = SVG_MERGE;
+    const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
+    if (customCount < 2) {
+      mergeBtn.style.display = 'none';
       }
       mergeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -317,9 +285,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
           const item = document.createElement('div');
           item.className = 'system-dropdown-item';
 
-          const itemIcon = makeCardIcon(false);
-          itemIcon.className = 'system-card-icon custom';
-          item.append(itemIcon);
+          item.append(makeCardIcon('custom'));
 
           const itemName = document.createElement('div');
           itemName.className = 'system-card-name';
@@ -349,7 +315,9 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
         });
         dropdown.append(cancelItem);
       } else {
-        // Normal dropdown: "New opening" + list of openings
+        // Normal dropdown: New opening, divider, Free Play, Full Repertoire, divider, custom openings
+
+        // New opening (always first)
         const addItem = document.createElement('div');
         addItem.className = 'system-dropdown-item system-dropdown-add';
         addItem.innerHTML = `${SVG_PLUS} <span class="system-card-name">New opening</span>`;
@@ -365,14 +333,63 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
         });
         dropdown.append(addItem);
 
+        // Divider after New opening
+        const divider1 = document.createElement('div');
+        divider1.className = 'system-dropdown-divider';
+        dropdown.append(divider1);
+
+        // Free Play option
+        if (!isFreePlayActive) {
+          const fpItem = document.createElement('div');
+          fpItem.className = 'system-dropdown-item';
+          fpItem.append(makeCardIcon('free-play'));
+          const fpName = document.createElement('div');
+          fpName.className = 'system-card-name';
+          fpName.textContent = FREE_PLAY_NAME;
+          fpItem.append(fpName);
+          fpItem.addEventListener('click', () => {
+            deleteTarget = null;
+            dropdownOpen = false;
+            switchOpening(FREE_PLAY_NAME);
+            openingChangeCb?.();
+            renderSystemPicker();
+          });
+          dropdown.append(fpItem);
+        }
+
+        // Full Repertoire option (when 2+ custom openings exist)
+        if (customRepertoires.length > 1 && !isFullRepActive) {
+          const frItem = document.createElement('div');
+          frItem.className = 'system-dropdown-item';
+          frItem.append(makeCardIcon('full-rep'));
+          const frName = document.createElement('div');
+          frName.className = 'system-card-name';
+          frName.textContent = FULL_REPERTOIRE_NAME;
+          frItem.append(frName);
+          frItem.addEventListener('click', () => {
+            deleteTarget = null;
+            dropdownOpen = false;
+            switchOpening(FULL_REPERTOIRE_NAME);
+            openingChangeCb?.();
+            renderSystemPicker();
+          });
+          dropdown.append(frItem);
+        }
+
+        // Divider before custom openings (if any exist)
+        if (customRepertoires.length > 0) {
+          const divider2 = document.createElement('div');
+          divider2.className = 'system-dropdown-divider';
+          dropdown.append(divider2);
+        }
+
+        // Custom openings
         for (const name of customRepertoires) {
           if (name === active && isCustomActive) continue;
           const item = document.createElement('div');
           item.className = 'system-dropdown-item';
 
-          const itemIcon = makeCardIcon(false);
-          itemIcon.className = 'system-card-icon custom';
-          item.append(itemIcon);
+          item.append(makeCardIcon('custom'));
 
           const itemName = document.createElement('div');
           itemName.className = 'system-card-name';
@@ -395,7 +412,6 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     }
 
     el.append(wrapper);
-  }
 
   // Confirm-delete banner
   if (deleteTarget) {
@@ -480,7 +496,7 @@ function renderRenameMode(el: HTMLElement, active: string): void {
   fpCard.className = 'system-card';
   fpCard.style.opacity = '0.4';
   fpCard.style.pointerEvents = 'none';
-  fpCard.append(makeCardIcon(true));
+  fpCard.append(makeCardIcon('free-play'));
   const fpName = document.createElement('div');
   fpName.className = 'system-card-name';
   fpName.textContent = FREE_PLAY_NAME;

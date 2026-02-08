@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:openings": "npx tsx scripts/build-openings.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
