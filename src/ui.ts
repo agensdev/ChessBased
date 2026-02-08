@@ -1339,6 +1339,7 @@ export function updateExplorerPanel(): void {
   html += '</div>';
   el.innerHTML = html;
 
+
   el.querySelectorAll('.lock-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const target = e.currentTarget as HTMLElement;
