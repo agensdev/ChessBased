@@ -227,7 +227,15 @@ export function getExplorerCache(): Map<string, ExplorerResponse> {
 
 export function updateConfig(newConfig: AppConfig): void {
   const oldColor = config.playerColor;
+  const explorerParamsChanged =
+    JSON.stringify(newConfig.ratings) !== JSON.stringify(config.ratings) ||
+    JSON.stringify(newConfig.speeds) !== JSON.stringify(config.speeds);
   config = newConfig;
+
+  if (explorerParamsChanged) {
+    explorerCache.clear();
+    fetchExplorerForFen(getFen());
+  }
 
   // Update board orientation if mode changed
   if (newConfig.playerColor !== oldColor) {

@@ -65,7 +65,10 @@ export function analyzePosition(
 
   const sorted = [...stats].sort((a, b) => b.winPct - a.winPct);
   const best = sorted[0];
-  const avgWinPct = stats.reduce((s, m) => s + m.winPct, 0) / stats.length;
+  const totalGames = stats.reduce((s, m) => s + m.total, 0);
+  const avgWinPct = totalGames > 0
+    ? stats.reduce((s, m) => s + m.winPct * m.total, 0) / totalGames
+    : 0;
 
   // Use engine eval if available, otherwise fall back to comfort threshold
   const positionWinPct = evalWinPct ?? best.winPct;
