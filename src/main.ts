@@ -28,6 +28,7 @@ import {
   getActiveTab,
 } from './ui';
 import { renderTreePanel, refreshTree } from './tree-ui';
+import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
 import { initEngine, evaluate, winningChance, formatScore } from './engine';
 import type { EvalScore } from './engine';
@@ -208,6 +209,8 @@ function boot(): void {
   updateExplorerPanel();
   setEvalBarVisible(config.showEval);
   requestEval(STARTING_FEN);
+
+  initMobileTabs();
 }
 
 boot();
