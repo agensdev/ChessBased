@@ -197,6 +197,11 @@ function boot(): void {
     refreshTree(treePanel);
   });
 
+  // Tooltip on eval bar (JS popup isn't clipped by overflow:hidden)
+  const evalBar = document.getElementById('eval-bar')!;
+  evalBar.setAttribute('data-tooltip', 'Stockfish evaluation — white plays from bottom');
+  evalBar.classList.add('tooltip-below');
+
   startGame(boardEl, config);
   refreshExplorerMode();
   updateMoveList();

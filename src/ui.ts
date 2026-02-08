@@ -70,6 +70,8 @@ export function initUI(
   renderSystemPicker();
   renderControls();
   renderConfigPanel();
+  initHelpModal();
+  initTooltips();
 }
 
 type PickerMode = 'normal' | 'rename' | 'confirm-delete' | 'merge-select' | 'merge-confirm';
@@ -99,6 +101,7 @@ export function renderSystemPicker(): void {
   const libraryBtn = document.createElement('button');
   libraryBtn.className = 'repertoire-action-btn';
   libraryBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> Browse openings';
+  libraryBtn.setAttribute('data-tooltip', 'Browse common openings to add');
   libraryBtn.addEventListener('click', () => {
     initLibraryModal(() => {
       renderSystemPicker();
@@ -112,6 +115,7 @@ export function renderSystemPicker(): void {
   const importBtn = document.createElement('button');
   importBtn.className = 'repertoire-action-btn';
   importBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Import PGN';
+  importBtn.setAttribute('data-tooltip', 'Import from PGN or Lichess study');
   importBtn.addEventListener('click', () => openPgnModal());
 
   primaryRow.append(libraryBtn, importBtn);
@@ -163,7 +167,10 @@ function makeCardIcon(type: 'free-play' | 'full-rep' | 'custom'): HTMLElement {
   const icon = document.createElement('div');
   icon.className = `system-card-icon ${type}`;
   const svgMap = { 'free-play': SVG_GLOBE, 'full-rep': SVG_LAYERS, 'custom': SVG_BOOK };
+  const tooltipMap = { 'free-play': 'Free Play', 'full-rep': 'Full Repertoire', 'custom': 'Custom opening' };
   icon.innerHTML = svgMap[type];
+  icon.setAttribute('data-tooltip', tooltipMap[type]);
+  icon.classList.add('tooltip-below');
   icon.querySelector('svg')!.setAttribute('width', '16');
   icon.querySelector('svg')!.setAttribute('height', '16');
   icon.querySelector('svg')!.style.fill = 'currentColor';
@@ -200,6 +207,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     const renameBtn = document.createElement('button');
     renameBtn.className = 'system-icon-btn';
     renameBtn.title = 'Rename';
+    renameBtn.setAttribute('data-tooltip', 'Rename opening');
     renameBtn.innerHTML = SVG_EDIT;
     renameBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -211,6 +219,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     const mergeBtn = document.createElement('button');
     mergeBtn.className = 'system-icon-btn';
     mergeBtn.title = 'Merge';
+    mergeBtn.setAttribute('data-tooltip', 'Combine two openings into one');
     mergeBtn.innerHTML = SVG_MERGE;
     const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
     if (customCount < 2) {
@@ -226,6 +235,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'system-icon-btn danger';
       deleteBtn.title = 'Delete';
+      deleteBtn.setAttribute('data-tooltip', 'Delete opening');
       deleteBtn.innerHTML = SVG_TRASH;
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -580,6 +590,9 @@ function renderControls(): void {
   flipBtn.className = 'btn';
   flipBtn.addEventListener('click', () => flipCb());
 
+  const segmentSection = document.createElement('div');
+  segmentSection.className = 'config-toggle-header';
+
   const segment = document.createElement('div');
   segment.className = 'segment-picker';
 
@@ -598,7 +611,20 @@ function renderControls(): void {
     segment.append(btn);
   }
 
-  el.append(segment, flipBtn, newGameBtn);
+  const segmentInfo = document.createElement('div');
+  segmentInfo.className = 'info-icon-wrap';
+  segmentInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+  const segmentTooltip = document.createElement('div');
+  segmentTooltip.className = 'info-tooltip';
+  segmentTooltip.innerHTML =
+    '<b>White</b> — you play white, bot plays black.<br>' +
+    '<b>Black</b> — you play black, bot plays white.<br>' +
+    '<b>Manual</b> — play both sides freely, no bot.';
+  segmentInfo.append(segmentTooltip);
+
+  segmentSection.append(segment, segmentInfo);
+
+  el.append(segmentSection, flipBtn, newGameBtn);
 }
 
 const ALERT_META: { type: AlertType; label: string; cls: string }[] = [
@@ -649,7 +675,7 @@ function renderConfigPanel(): void {
 
   const indicatorHeader = document.createElement('div');
   indicatorHeader.className = 'config-toggle-header';
-  indicatorHeader.innerHTML = `<span class="config-toggle-title">Indicators</span>`;
+  indicatorHeader.innerHTML = `<span class="config-toggle-title">Display</span>`;
 
   const indicatorInfo = document.createElement('div');
   indicatorInfo.className = 'info-icon-wrap';
@@ -657,6 +683,7 @@ function renderConfigPanel(): void {
   const indicatorTooltip = document.createElement('div');
   indicatorTooltip.className = 'info-tooltip';
   indicatorTooltip.innerHTML =
+    'Visual aids to help you understand positions.<br><br>' +
     '<b>Eval bar</b> — Stockfish evaluation shown as a vertical bar next to the board.<br>' +
     '<b>Move badges</b> — Marks on moves: <b>!</b> for best move, <b>?</b> for blunders, <b>?!</b> for traps.<br>' +
     '<b>Always show explorer</b> — Show explorer moves even during training (normally hidden until you click).';
@@ -669,6 +696,7 @@ function renderConfigPanel(): void {
   const evalChip = document.createElement('button');
   evalChip.className = `chip${currentConfig.showEval ? ' selected' : ''}`;
   evalChip.textContent = 'Eval bar';
+  evalChip.setAttribute('data-tooltip', 'Stockfish evaluation bar next to the board');
   evalChip.addEventListener('click', () => {
     const isOn = evalChip.classList.toggle('selected');
     currentConfig.showEval = isOn;
@@ -678,6 +706,7 @@ function renderConfigPanel(): void {
   const badgesChip = document.createElement('button');
   badgesChip.className = `chip${currentConfig.showMoveBadges ? ' selected' : ''}`;
   badgesChip.textContent = 'Move badges';
+  badgesChip.setAttribute('data-tooltip', 'Mark best moves (!), mistakes (?), and traps (?!)');
   badgesChip.addEventListener('click', () => {
     const isOn = badgesChip.classList.toggle('selected');
     currentConfig.showMoveBadges = isOn;
@@ -687,6 +716,7 @@ function renderConfigPanel(): void {
   const explorerChip = document.createElement('button');
   explorerChip.className = `chip${currentConfig.showExplorer ? ' selected' : ''}`;
   explorerChip.textContent = 'Always show explorer';
+  explorerChip.setAttribute('data-tooltip', 'Show explorer during bot play');
   explorerChip.addEventListener('click', () => {
     const isOn = explorerChip.classList.toggle('selected');
     currentConfig.showExplorer = isOn;
@@ -710,6 +740,7 @@ function renderConfigPanel(): void {
   const alertTooltip = document.createElement('div');
   alertTooltip.className = 'info-tooltip';
   alertTooltip.innerHTML =
+    'Warnings that appear on your turn at critical moments.<br><br>' +
     '<b>Danger</b> — Most moves lose ground here. Don\'t mess up!<br>' +
     '<b>Opportunity</b> — One move clearly outperforms the rest.<br>' +
     '<b>Trap</b> — A popular move is actually a mistake.';
@@ -718,11 +749,17 @@ function renderConfigPanel(): void {
 
   const alertGrid = document.createElement('div');
   alertGrid.className = 'alert-toggle-grid';
+  const alertTooltips: Record<string, string> = {
+    danger: 'Warn when most moves lose ground',
+    opportunity: 'Highlight when one move stands out',
+    trap: 'Flag popular moves that are actually mistakes',
+  };
   for (const meta of ALERT_META) {
     const chip = document.createElement('button');
     const isOn = currentConfig.enabledAlerts.includes(meta.type);
     chip.className = `alert-chip ${meta.cls}${isOn ? ' selected' : ''}`;
     chip.textContent = meta.label;
+    chip.setAttribute('data-tooltip', alertTooltips[meta.type]);
     chip.addEventListener('click', () => {
       const wasOn = chip.classList.contains('selected');
       chip.classList.toggle('selected');
@@ -772,8 +809,19 @@ function renderDrawerContent(): void {
   // Top moves
   const topNSection = document.createElement('div');
   topNSection.className = 'config-section';
+  const topNHeader = document.createElement('div');
+  topNHeader.className = 'config-toggle-header';
   const topNLabel = document.createElement('h3');
   topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
+  topNLabel.style.margin = '0';
+  const topNInfo = document.createElement('div');
+  topNInfo.className = 'info-icon-wrap';
+  topNInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+  const topNTooltip = document.createElement('div');
+  topNTooltip.className = 'info-tooltip';
+  topNTooltip.textContent = 'Bot plays from this many of the most popular moves.';
+  topNInfo.append(topNTooltip);
+  topNHeader.append(topNLabel, topNInfo);
   const topNSlider = document.createElement('input');
   topNSlider.type = 'range';
   topNSlider.min = '1';
@@ -784,13 +832,24 @@ function renderDrawerContent(): void {
     topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
     configChangeCb(currentConfig);
   });
-  topNSection.append(topNLabel, topNSlider);
+  topNSection.append(topNHeader, topNSlider);
 
   // Bot min play rate
   const playRateSection = document.createElement('div');
   playRateSection.className = 'config-section';
+  const playRateHeader = document.createElement('div');
+  playRateHeader.className = 'config-toggle-header';
   const playRateLabel = document.createElement('h3');
   playRateLabel.textContent = `Bot min play rate: ${currentConfig.botMinPlayRatePct}%`;
+  playRateLabel.style.margin = '0';
+  const playRateInfo = document.createElement('div');
+  playRateInfo.className = 'info-icon-wrap';
+  playRateInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+  const playRateTooltip = document.createElement('div');
+  playRateTooltip.className = 'info-tooltip';
+  playRateTooltip.textContent = 'Bot only plays moves above this popularity threshold.';
+  playRateInfo.append(playRateTooltip);
+  playRateHeader.append(playRateLabel, playRateInfo);
   const playRateSlider = document.createElement('input');
   playRateSlider.type = 'range';
   playRateSlider.min = '1';
@@ -801,14 +860,25 @@ function renderDrawerContent(): void {
     playRateLabel.textContent = `Bot min play rate: ${currentConfig.botMinPlayRatePct}%`;
     configChangeCb(currentConfig);
   });
-  playRateSection.append(playRateLabel, playRateSlider);
+  playRateSection.append(playRateHeader, playRateSlider);
 
   // Bot move selection
   const weightingSection = document.createElement('div');
   weightingSection.className = 'config-section';
+  const weightingHeader = document.createElement('div');
+  weightingHeader.className = 'config-toggle-header';
   const weightingLabel = document.createElement('h3');
   weightingLabel.textContent = 'Bot move selection';
-  weightingSection.append(weightingLabel);
+  weightingLabel.style.margin = '0';
+  const weightingInfo = document.createElement('div');
+  weightingInfo.className = 'info-icon-wrap';
+  weightingInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+  const weightingTooltip = document.createElement('div');
+  weightingTooltip.className = 'info-tooltip';
+  weightingTooltip.innerHTML = '<b>Weighted</b> — more popular moves are more likely.<br><b>Equal</b> — all qualifying moves equally likely.';
+  weightingInfo.append(weightingTooltip);
+  weightingHeader.append(weightingLabel, weightingInfo);
+  weightingSection.append(weightingHeader);
 
   const WEIGHTING_OPTIONS: { value: BotWeighting; label: string }[] = [
     { value: 'weighted', label: 'Weighted' },
@@ -909,7 +979,7 @@ export function updateStatus(phase: GamePhase, openingName?: string): void {
       text += '<span class="turn-indicator thinking">Thinking...</span>';
       break;
     case 'OUT_OF_BOOK':
-      text += '<span class="turn-indicator out-of-book">Out of book</span>';
+      text += '<span class="turn-indicator out-of-book" data-tooltip="Position left the opening database">Out of book</span>';
       break;
     case 'GAME_OVER':
       text += '<span class="turn-indicator game-over">Game over</span>';
@@ -934,7 +1004,7 @@ export function updateStatus(phase: GamePhase, openingName?: string): void {
     }
     if (repMoves > 0) {
       const pct = Math.round((repMoves / history.length) * 100);
-      text += `<div class="rep-depth"><span class="rep-depth-bar" style="width:${pct}%"></span><span class="rep-depth-label">${repMoves}/${history.length} moves in opening</span></div>`;
+      text += `<div class="rep-depth" data-tooltip="Consecutive moves matching your repertoire"><span class="rep-depth-bar" style="width:${pct}%"></span><span class="rep-depth-label">${repMoves}/${history.length} moves in opening</span></div>`;
     }
   }
 
@@ -994,7 +1064,24 @@ export function updateMoveList(): void {
 
   const vi = getViewIndex();
 
-  let html = '<div class="move-table">';
+  // Check if any moves have repertoire coloring
+  let hasRepHit = false;
+  let hasRepMiss = false;
+  for (let i = 0; i < history.length && (!hasRepHit || !hasRepMiss); i++) {
+    const cls = repClass(i, history);
+    if (cls === ' rep-hit') hasRepHit = true;
+    if (cls === ' rep-miss') hasRepMiss = true;
+  }
+
+  let html = '';
+  if (hasRepHit || hasRepMiss) {
+    html += '<div class="move-legend">';
+    if (hasRepHit) html += '<span class="move-legend-item"><span class="move-legend-dot hit"></span>In repertoire</span>';
+    if (hasRepMiss) html += '<span class="move-legend-item"><span class="move-legend-dot miss"></span>Deviated</span>';
+    html += '</div>';
+  }
+
+  html += '<div class="move-table">';
   for (let i = 0; i < history.length; i += 2) {
     const moveNum = Math.floor(i / 2) + 1;
     const white = history[i];
@@ -1027,8 +1114,8 @@ export function updateMoveList(): void {
   if (isViewingHistory() && continueCb) {
     actionsHtml += '<button class="btn continue-btn">Continue from here</button>';
   }
-  actionsHtml += '<button class="btn lock-line-btn">Add line</button>';
-  actionsHtml += '<button class="btn lock-line-new-btn">Add to new</button>';
+  actionsHtml += '<button class="btn lock-line-btn" data-tooltip="Lock all moves up to here">Add line</button>';
+  actionsHtml += '<button class="btn lock-line-new-btn" data-tooltip="Lock into a new opening">Add to new</button>';
   actionsEl.innerHTML = actionsHtml;
 
   const continueBtn = actionsEl.querySelector('.continue-btn');
@@ -1150,7 +1237,7 @@ export function updateAlertBanner(): void {
 
   const info = alertLabels[alertType];
   const bestUci = result.analysis.bestMoveUci;
-  el.innerHTML = `<div class="position-alert clickable ${info.cls}">${info.text}</div>`;
+  el.innerHTML = `<div class="position-alert clickable ${info.cls}" data-tooltip="Click to show best move">${info.text}</div>`;
 
   // Clear any previous arrow when alert changes
   setAutoShapes([]);
@@ -1174,7 +1261,8 @@ export function updateExplorerPanel(): void {
 
   // Skeleton mode: always show the panel structure, but hide move content
   if (!showContent) {
-    let html = '<div class="explorer-list explorer-skeleton">';
+    let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+    html += '<div class="explorer-list explorer-skeleton">';
     for (let i = 0; i < EXPLORER_ROWS; i++) {
       html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
     }
@@ -1202,7 +1290,8 @@ export function updateExplorerPanel(): void {
   const result = showBadges ? currentAnalysis() : null;
   const analysis = result?.analysis ?? null;
 
-  let html = '<div class="explorer-list">';
+  let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+  html += '<div class="explorer-list">';
 
   for (const move of visibleMoves) {
     const total = move.white + move.draws + move.black;
@@ -1217,7 +1306,9 @@ export function updateExplorerPanel(): void {
 
     // Move badge
     const badge = analysis ? getBadgeForMove(analysis, move.uci) : null;
-    const badgeHtml = badge && badge !== 'book' ? `<span class="move-badge badge-${badge.replace('_', '-')}">${badgeSymbol(badge)}</span>` : '';
+    const badgeTooltipMap: Record<string, string> = { best: 'Best move', blunder: 'Mistake', trap: 'Popular trap' };
+    const badgeTooltipAttr = badge && badge !== 'book' && badgeTooltipMap[badge] ? ` data-tooltip="${badgeTooltipMap[badge]}"` : '';
+    const badgeHtml = badge && badge !== 'book' ? `<span class="move-badge badge-${badge.replace('_', '-')}"${badgeTooltipAttr}>${badgeSymbol(badge)}</span>` : '';
 
     html += `<div class="explorer-move${played}${lockedCls}" data-uci="${move.uci}">
       <span class="explorer-san">${move.san}</span>
@@ -1430,6 +1521,107 @@ function doPgnImport(): void {
   openingChangeCb?.();
 
   setTimeout(closePgnModal, 1500);
+}
+
+// ── Tooltip System ──
+
+function initTooltips(): void {
+  const popup = document.createElement('div');
+  popup.className = 'tooltip-popup';
+  document.body.append(popup);
+
+  const MARGIN = 8;
+
+  function showPopup(target: HTMLElement, content: string, isHtml: boolean): void {
+    if (isHtml) {
+      popup.innerHTML = content;
+    } else {
+      popup.textContent = content;
+    }
+    popup.classList.toggle('tooltip-wide', target.classList.contains('tooltip-wide') || isHtml);
+
+    // Position off-screen to measure
+    popup.style.left = '0';
+    popup.style.top = '0';
+    popup.classList.add('visible');
+
+    const rect = target.getBoundingClientRect();
+    const popRect = popup.getBoundingClientRect();
+    const below = target.classList.contains('tooltip-below');
+
+    let top: number;
+    if (below || rect.top - popRect.height - MARGIN < 0) {
+      top = rect.bottom + MARGIN;
+    } else {
+      top = rect.top - popRect.height - MARGIN;
+    }
+
+    let left = rect.left + rect.width / 2 - popRect.width / 2;
+    left = Math.max(MARGIN, Math.min(left, window.innerWidth - popRect.width - MARGIN));
+    top = Math.max(MARGIN, Math.min(top, window.innerHeight - popRect.height - MARGIN));
+
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+  }
+
+  document.addEventListener('mouseenter', (e) => {
+    const el = e.target as HTMLElement;
+
+    // Info-icon tooltips (rich HTML)
+    const infoWrap = el.closest?.('.info-icon-wrap') as HTMLElement | null;
+    if (infoWrap) {
+      const infoTip = infoWrap.querySelector('.info-tooltip') as HTMLElement | null;
+      if (infoTip) {
+        showPopup(infoWrap, infoTip.innerHTML, true);
+        return;
+      }
+    }
+
+    // Data-tooltip (plain text)
+    const target = el.closest?.('[data-tooltip]') as HTMLElement | null;
+    if (!target) return;
+    showPopup(target, target.getAttribute('data-tooltip')!, false);
+  }, true);
+
+  document.addEventListener('mouseleave', (e) => {
+    const el = e.target as HTMLElement;
+    if (el.closest?.('.info-icon-wrap') || el.closest?.('[data-tooltip]')) {
+      popup.classList.remove('visible');
+    }
+  }, true);
+}
+
+// ── Help Modal ──
+
+function initHelpModal(): void {
+  const sidebar = document.getElementById('left-sidebar')!;
+
+  const helpBtn = document.createElement('button');
+  helpBtn.className = 'help-btn';
+  helpBtn.textContent = '?';
+  helpBtn.setAttribute('data-tooltip', 'Help & guide');
+  helpBtn.classList.add('tooltip-below');
+  helpBtn.addEventListener('click', openHelpModal);
+  sidebar.append(helpBtn);
+
+  document.getElementById('help-close')!.addEventListener('click', closeHelpModal);
+  document.getElementById('help-overlay')!.addEventListener('click', closeHelpModal);
+}
+
+function openHelpModal(): void {
+  const overlay = document.getElementById('help-overlay')!;
+  const modal = document.getElementById('help-modal')!;
+  overlay.classList.remove('hidden');
+  overlay.classList.add('visible');
+  modal.classList.remove('hidden');
+}
+
+function closeHelpModal(): void {
+  const overlay = document.getElementById('help-overlay')!;
+  const modal = document.getElementById('help-modal')!;
+  overlay.classList.remove('visible');
+  overlay.classList.add('hidden');
+  modal.classList.add('hidden');
 }
 
 // ── Sidebar Tabs ──

@@ -69,6 +69,41 @@
         </div>
       </div>
     </div>
+    <div id="help-overlay" class="drawer-overlay hidden"></div>
+    <div id="help-modal" class="help-modal hidden">
+      <div class="help-modal-header">
+        <h2>How to use ChessBased</h2>
+        <button id="help-close" class="drawer-close-btn">&times;</button>
+      </div>
+      <div class="help-modal-body">
+        <p>ChessBased is an opening repertoire trainer. Practice your openings against a bot that plays statistically realistic responses from real Lichess games.</p>
+
+        <h3>Quick Start</h3>
+        <ol>
+          <li>Choose <b>White</b> or <b>Black</b> to start practicing.</li>
+          <li>Play your moves on the board &mdash; the bot responds with popular moves from the database.</li>
+          <li>Lock moves you want to learn by clicking the lock icon in the explorer panel.</li>
+          <li>Start a <b>New Game</b> to practice your locked lines again.</li>
+        </ol>
+
+        <h3>Key Concepts</h3>
+        <ul>
+          <li><b>Locked moves</b> &mdash; moves saved in your repertoire. The lock icon in the explorer marks moves as "must learn".</li>
+          <li><b>Openings</b> &mdash; group locked moves into named openings. Use Browse or Import PGN to add lines.</li>
+          <li><b>Alerts</b> &mdash; colored banners warn about critical positions. Click an alert to see the best move arrow.</li>
+          <li><b>Explorer</b> &mdash; shows move statistics from millions of Lichess games. Click a move to play it.</li>
+        </ul>
+
+        <h3>Tips</h3>
+        <ul>
+          <li>Use <kbd>&larr;</kbd> <kbd>&rarr;</kbd> arrow keys to step through move history.</li>
+          <li>Hover any explorer move to preview it as an arrow on the board.</li>
+          <li>Click alert banners to highlight the best move.</li>
+          <li><span class="help-color" style="background:var(--opportunity)"></span>Green moves match your repertoire, <span class="help-color" style="background:var(--danger)"></span>red means you deviated.</li>
+          <li>Use <b>Manual</b> mode to explore freely without a bot opponent.</li>
+        </ul>
+      </div>
+    </div>
     <div id="library-overlay" class="drawer-overlay hidden"></div>
     <div id="library-modal" class="library-modal hidden">
       <div class="library-modal-header">
