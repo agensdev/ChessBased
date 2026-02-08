@@ -282,36 +282,29 @@ cg-board square.selected {
   gap: 16px;
 }
 
-#left-sidebar {
-  position: relative;
-}
-
 /* ── Help Button ── */
 .help-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 100%;
+  padding: 8px;
   border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
   color: var(--text-muted);
   font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   transition: all var(--transition-fast);
-  z-index: 10;
 }
 
 .help-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 /* ── Help Modal ── */
