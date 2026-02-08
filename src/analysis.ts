@@ -1,4 +1,5 @@
-import type { ExplorerMove, AlertThresholds, PositionAnalysis, MoveBadge } from './types';
+import type { ExplorerMove, PositionAnalysis, MoveBadge } from './types';
+import { DEFAULT_THRESHOLDS } from './types';
 
 interface MoveStats {
   uci: string;
@@ -34,10 +35,10 @@ export interface ParentContext {
 export function analyzePosition(
   moves: ExplorerMove[],
   sideToMove: 'w' | 'b',
-  thresholds: AlertThresholds,
   parentContext?: ParentContext,
   evalWinPct?: number,
 ): PositionAnalysis {
+  const thresholds = DEFAULT_THRESHOLDS;
   const stats = computeStats(moves, sideToMove, thresholds.minGames);
   const badges = new Map<string, MoveBadge>();
 

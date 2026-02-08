@@ -1,6 +1,5 @@
 import type {
   AppConfig,
-  AlertThresholds,
   AlertType,
   BotWeighting,
   ExplorerResponse,
@@ -9,7 +8,7 @@ import type {
   PlayerColor,
   PositionAnalysis,
 } from './types';
-import { ALL_ALERT_TYPES, DEFAULT_THRESHOLDS, RATING_OPTIONS, SPEED_OPTIONS } from './types';
+import { ALL_ALERT_TYPES, RATING_OPTIONS, SPEED_OPTIONS } from './types';
 import type { Key } from '@lichess-org/chessground/types';
 import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes } from './board';
 import {
@@ -886,58 +885,6 @@ function renderDrawerContent(): void {
 
   el.append(topNSection, playRateSection, weightingSection, ratingsSection, speedsSection);
 
-  // ── Alert Thresholds ──
-  const thresholdsHeader = document.createElement('h3');
-  thresholdsHeader.className = 'config-section';
-  thresholdsHeader.textContent = 'Alert Thresholds';
-  thresholdsHeader.style.fontSize = '14px';
-  thresholdsHeader.style.textTransform = 'uppercase';
-  thresholdsHeader.style.letterSpacing = '0.06em';
-  thresholdsHeader.style.color = 'var(--text-muted)';
-  thresholdsHeader.style.marginBottom = '12px';
-  thresholdsHeader.style.marginTop = '8px';
-  thresholdsHeader.style.paddingTop = '16px';
-  thresholdsHeader.style.borderTop = '1px solid var(--border)';
-  el.append(thresholdsHeader);
-
-  const thresholds = currentConfig.alertThresholds;
-  const sliders: { key: keyof AlertThresholds; label: string; min: number; max: number }[] = [
-    { key: 'spreadThreshold', label: 'Spread threshold', min: 5, max: 25 },
-    { key: 'comfortThreshold', label: 'Comfort win % (no eval fallback)', min: 45, max: 65 },
-    { key: 'blunderDeficit', label: 'Blunder deficit', min: 5, max: 20 },
-    { key: 'popularThresholdPct', label: 'Popular move %', min: 5, max: 30 },
-    { key: 'minGames', label: 'Min games', min: 10, max: 200 },
-  ];
-
-  for (const s of sliders) {
-    const sec = document.createElement('div');
-    sec.className = 'config-section';
-    const lbl = document.createElement('h3');
-    lbl.textContent = `${s.label}: ${thresholds[s.key]}`;
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = String(s.min);
-    slider.max = String(s.max);
-    slider.value = String(thresholds[s.key]);
-    slider.addEventListener('input', () => {
-      thresholds[s.key] = parseInt(slider.value);
-      lbl.textContent = `${s.label}: ${thresholds[s.key]}`;
-      configChangeCb(currentConfig);
-    });
-    sec.append(lbl, slider);
-    el.append(sec);
-  }
-
-  const resetBtn = document.createElement('button');
-  resetBtn.className = 'btn';
-  resetBtn.textContent = 'Reset to defaults';
-  resetBtn.style.marginTop = '4px';
-  resetBtn.addEventListener('click', () => {
-    currentConfig.alertThresholds = { ...DEFAULT_THRESHOLDS };
-    renderDrawerContent();
-    configChangeCb(currentConfig);
-  });
-  el.append(resetBtn);
 }
 
 export function updateStatus(phase: GamePhase, openingName?: string): void {
@@ -1028,7 +975,7 @@ function historyBadge(moveIndex: number, history: { uci: string; fen: string }[]
   }
 
   const sideToMove = fenBefore.split(' ')[1] as 'w' | 'b';
-  const analysis = analyzePosition(explorerData.moves, sideToMove, currentConfig.alertThresholds, parentContext);
+  const analysis = analyzePosition(explorerData.moves, sideToMove, parentContext);
   const badge = getBadgeForMove(analysis, history[moveIndex].uci);
   if (!badge || badge === 'book') return '';
 
@@ -1166,7 +1113,7 @@ function currentAnalysis(): { analysis: PositionAnalysis; parentContext?: Parent
     ? (sideToMove === 'w' ? currentEvalWinPct : 100 - currentEvalWinPct)
     : undefined;
 
-  const analysis = analyzePosition(moves, sideToMove, currentConfig.alertThresholds, parentContext, evalWinPct);
+  const analysis = analyzePosition(moves, sideToMove, parentContext, evalWinPct);
   return { analysis, parentContext };
 }
 

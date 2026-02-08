@@ -1,4 +1,4 @@
-import { AppConfig, ALL_ALERT_TYPES, DEFAULT_CONFIG, DEFAULT_THRESHOLDS } from './types';
+import { AppConfig, ALL_ALERT_TYPES, DEFAULT_CONFIG } from './types';
 
 const STORAGE_KEY = 'chessbased-config';
 
@@ -10,7 +10,6 @@ export function loadConfig(): AppConfig {
       const config: AppConfig = {
         ...DEFAULT_CONFIG,
         ...parsed,
-        alertThresholds: { ...DEFAULT_THRESHOLDS, ...parsed.alertThresholds },
       };
 
       // Migrate old showAlertBanners boolean → enabledAlerts array
@@ -23,7 +22,7 @@ export function loadConfig(): AppConfig {
   } catch {
     // ignore corrupted data
   }
-  return { ...DEFAULT_CONFIG, alertThresholds: { ...DEFAULT_THRESHOLDS } };
+  return { ...DEFAULT_CONFIG };
 }
 
 export function saveConfig(config: AppConfig): void {

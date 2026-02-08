@@ -48,7 +48,6 @@ export interface AppConfig {
   enabledAlerts: AlertType[];
   showMoveBadges: boolean;
   showExplorer: boolean;
-  alertThresholds: AlertThresholds;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -62,7 +61,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   enabledAlerts: [],
   showMoveBadges: false,
   showExplorer: false,
-  alertThresholds: { ...DEFAULT_THRESHOLDS },
 };
 
 export const RATING_OPTIONS = [400, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500];
