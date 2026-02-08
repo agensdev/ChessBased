@@ -1,39 +1,39 @@
 /* ── CSS Variables ── */
 :root {
-  --bg-deep: #131520;
-  --bg-surface: #1a1c2e;
-  --bg-elevated: #222438;
-  --bg-hover: #2a2d44;
-  --bg-input: rgba(255, 255, 255, 0.06);
+  --bg-deep: #121210;
+  --bg-surface: #1b1a17;
+  --bg-elevated: #252420;
+  --bg-hover: #302f29;
+  --bg-input: rgba(255, 255, 255, 0.05);
 
-  --text-primary: #e8e8ec;
-  --text-secondary: #a0a4b8;
-  --text-muted: #6b7094;
-  --text-dim: #4a4e6a;
+  --text-primary: #e8e4da;
+  --text-secondary: #a8a293;
+  --text-muted: #756f60;
+  --text-dim: #524d42;
 
-  --accent: #5b7fc7;
-  --accent-hover: #6d8fd4;
-  --accent-subtle: rgba(91, 127, 199, 0.15);
+  --accent: #c9a84c;
+  --accent-hover: #d4b65e;
+  --accent-subtle: rgba(201, 168, 76, 0.14);
 
   --gold: #c9a84c;
   --gold-dim: rgba(201, 168, 76, 0.12);
 
-  --danger: #e06060;
-  --danger-dim: rgba(224, 96, 96, 0.12);
-  --opportunity: #5cb85c;
-  --opportunity-dim: rgba(92, 184, 92, 0.12);
-  --trap: #e8a040;
-  --trap-dim: rgba(232, 160, 64, 0.12);
-  --thinking: #5ba8e0;
+  --danger: #d45454;
+  --danger-dim: rgba(212, 84, 84, 0.12);
+  --opportunity: #5a9e5a;
+  --opportunity-dim: rgba(90, 158, 90, 0.12);
+  --trap: #d4943c;
+  --trap-dim: rgba(212, 148, 60, 0.12);
+  --thinking: #c9a84c;
 
-  --border: rgba(255, 255, 255, 0.08);
-  --border-hover: rgba(255, 255, 255, 0.15);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.14);
 
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 
-  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
   --font-display: 'Playfair Display', Georgia, serif;
 
@@ -58,6 +58,7 @@ body {
   align-items: flex-start;
   padding: 24px;
   line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 #app {
@@ -85,13 +86,13 @@ body {
 /* ── Eval Bar ── */
 #eval-bar {
   width: 26px;
-  background: #2b3040;
+  background: #2a2823;
   border-radius: var(--radius-sm);
   overflow: hidden;
   position: relative;
   margin-right: 8px;
   flex-shrink: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 #eval-fill {
@@ -100,7 +101,7 @@ body {
   left: 0;
   right: 0;
   height: 50%;
-  background: #d8dfe6;
+  background: #e8d5b5;
   transition: height 0.5s ease;
 }
 
@@ -115,13 +116,13 @@ body {
   z-index: 1;
   padding: 3px 0;
   bottom: 2px;
-  color: #2b3040;
+  color: #2a2823;
 }
 
 #eval-label.black-advantage {
   bottom: auto;
   top: 2px;
-  color: #d8dfe6;
+  color: #e8d5b5;
 }
 
 #board {
@@ -132,22 +133,22 @@ body {
   max-width: calc(100vh - 140px);
   border-radius: var(--radius-sm);
   overflow: hidden;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(201, 168, 76, 0.1);
 }
 
-/* ── Board Theme (blue) — overrides chessground.brown.css ── */
+/* ── Board Theme (warm) — overrides chessground.brown.css ── */
 cg-board {
-  background-color: #dee3e6;
-  background-image: repeating-conic-gradient(#8ca2ad 0% 25%, #dee3e6 0% 50%);
+  background-color: #e8d5b5;
+  background-image: repeating-conic-gradient(#b58863 0% 25%, #e8d5b5 0% 50%);
   background-size: 25% 25%;
 }
 
 cg-board square.last-move {
-  background-color: rgba(91, 127, 199, 0.41);
+  background-color: rgba(201, 168, 76, 0.38);
 }
 
 cg-board square.selected {
-  background-color: rgba(91, 127, 199, 0.55);
+  background-color: rgba(201, 168, 76, 0.55);
 }
 
 /* ── Move List ── */
@@ -256,8 +257,8 @@ cg-board square.selected {
 }
 
 .explorer-move.locked {
-  background: rgba(91, 127, 199, 0.25);
-  border-color: rgba(91, 127, 199, 0.3);
+  background: rgba(201, 168, 76, 0.18);
+  border-color: rgba(201, 168, 76, 0.25);
   border-left: 2px solid var(--accent);
 }
 
@@ -268,7 +269,7 @@ cg-board square.selected {
 }
 
 .explorer-move.locked .explorer-san {
-  color: #8ab4e8;
+  color: var(--accent-hover);
 }
 
 /* ── Sidebars ── */
@@ -340,9 +341,11 @@ cg-board square.selected {
 
 .help-modal-header h2 {
   font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--text-primary);
+  letter-spacing: -0.02em;
 }
 
 .help-modal-body {
@@ -460,7 +463,7 @@ cg-board square.selected {
 }
 
 .system-card.active .system-card-name {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .system-card-check {
@@ -679,7 +682,7 @@ cg-board square.selected {
 
 .system-rename-input:focus {
   border-color: var(--accent-hover);
-  box-shadow: 0 0 0 2px rgba(91, 127, 199, 0.2);
+  box-shadow: 0 0 0 2px rgba(201, 168, 76, 0.2);
 }
 
 /* Confirm delete banner */
@@ -780,9 +783,9 @@ cg-board square.selected {
 .btn-confirm-yes.merge {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid rgba(91, 127, 199, 0.4);
+  border: 1px solid rgba(201, 168, 76, 0.4);
   border-radius: var(--radius-sm);
-  background: rgba(91, 127, 199, 0.15);
+  background: rgba(201, 168, 76, 0.15);
   color: var(--accent);
   cursor: pointer;
   font-family: var(--font-sans);
@@ -795,7 +798,7 @@ cg-board square.selected {
 }
 
 .btn-confirm-yes.merge:hover {
-  background: rgba(91, 127, 199, 0.3);
+  background: rgba(201, 168, 76, 0.3);
 }
 
 .system-confirm-merge .btn-confirm-no {
@@ -819,11 +822,13 @@ cg-board square.selected {
 /* ── Status ── */
 .opening-name {
   font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--gold);
   margin-bottom: 4px;
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .turn-indicator {
@@ -879,7 +884,7 @@ cg-board square.selected {
   top: 0;
   left: 0;
   height: 100%;
-  background: linear-gradient(90deg, rgba(92, 184, 92, 0.3), rgba(92, 184, 92, 0.15));
+  background: linear-gradient(90deg, rgba(90, 158, 90, 0.3), rgba(90, 158, 90, 0.15));
   border-radius: 10px;
   transition: width var(--transition-med);
 }
@@ -930,7 +935,8 @@ cg-board square.selected {
 
 .segment-btn.selected {
   background: var(--accent);
-  color: #fff;
+  color: #1a1917;
+  font-weight: 700;
 }
 
 /* ── Explorer Moves — fixed 10 rows ── */
@@ -984,7 +990,7 @@ cg-board square.selected {
 }
 
 .explorer-move.skeleton-row {
-  background: rgba(255, 255, 255, 0.015);
+  background: rgba(255, 255, 255, 0.012);
   cursor: pointer;
 }
 
@@ -1029,7 +1035,7 @@ cg-board square.selected {
 .explorer-bar {
   flex: 1;
   height: 20px;
-  background: #2a2a2a;
+  background: #2a2823;
   border-radius: 3px;
   overflow: hidden;
   display: flex;
@@ -1037,7 +1043,7 @@ cg-board square.selected {
 }
 
 .bar-white {
-  background: #d8dfe6;
+  background: #e8d5b5;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1051,7 +1057,7 @@ cg-board square.selected {
 }
 
 .bar-draw {
-  background: #7a8a96;
+  background: #8a8275;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1067,7 +1073,7 @@ cg-board square.selected {
 }
 
 .bar-black {
-  background: #2b3040;
+  background: #2a2823;
   height: 100%;
   display: flex;
   align-items: center;
@@ -1149,12 +1155,14 @@ cg-board square.selected {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: #1a1917;
+  font-weight: 600;
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  color: #1a1917;
 }
 
 /* ── Config Panel ── */
@@ -1321,7 +1329,7 @@ input[type='range']::-webkit-slider-thumb {
 
 input[type='range']::-webkit-slider-thumb:hover {
   transform: scale(1.15);
-  box-shadow: 0 0 0 4px rgba(91, 127, 199, 0.2);
+  box-shadow: 0 0 0 4px rgba(201, 168, 76, 0.2);
 }
 
 input[type='range']::-moz-range-thumb {
@@ -1541,9 +1549,11 @@ input[type='range']::-moz-range-track {
 
 .drawer-title {
   font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--text-primary);
+  letter-spacing: -0.02em;
 }
 
 .drawer-close-btn {
@@ -1733,7 +1743,8 @@ input[type='range']::-moz-range-track {
 
 .sidebar-tab.active {
   background: var(--accent);
-  color: #fff;
+  color: #1a1917;
+  font-weight: 700;
 }
 
 .tab-panel.hidden {
@@ -1897,9 +1908,11 @@ input[type='range']::-moz-range-track {
 
 .pgn-modal-header h2 {
   font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--text-primary);
+  letter-spacing: -0.02em;
 }
 
 .pgn-modal-body {
@@ -1929,7 +1942,7 @@ input[type='range']::-moz-range-track {
 
 .study-url-row input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(91, 127, 199, 0.2);
+  box-shadow: 0 0 0 2px rgba(201, 168, 76, 0.2);
 }
 
 .study-url-row input::placeholder {
@@ -1981,7 +1994,7 @@ input[type='range']::-moz-range-track {
 
 #pgn-textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(91, 127, 199, 0.2);
+  box-shadow: 0 0 0 2px rgba(201, 168, 76, 0.2);
 }
 
 #pgn-textarea::placeholder {
@@ -2104,9 +2117,11 @@ input[type='range']::-moz-range-track {
 
 .library-modal-header h2 {
   font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--text-primary);
+  letter-spacing: -0.02em;
 }
 
 .library-modal-body {
@@ -2141,7 +2156,7 @@ input[type='range']::-moz-range-track {
 
 #library-search:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(91, 127, 199, 0.2);
+  box-shadow: 0 0 0 2px rgba(201, 168, 76, 0.2);
 }
 
 #library-search::placeholder {
@@ -2384,10 +2399,12 @@ input[type='range']::-moz-range-track {
 
 .library-detail-title {
   font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
+  font-style: italic;
   color: var(--text-primary);
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 .library-detail-content {
@@ -2469,7 +2486,7 @@ input[type='range']::-moz-range-track {
 
 .library-detail-add-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: #1a1917;
 }
 
 .library-detail-add-btn.added {
