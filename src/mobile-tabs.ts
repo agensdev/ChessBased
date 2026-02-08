@@ -12,7 +12,7 @@ const TAB_CONFIG: { id: TabId; label: string }[] = [
 ];
 
 const MOVES_ELEMENTS = ['controls', 'alert-banner', 'moves', 'move-actions'];
-const EXPLORER_ELEMENTS = ['status', 'sidebar-tabs', 'tab-explorer', 'tab-lines'];
+const EXPLORER_ELEMENTS = ['status', 'engine-lines', 'sidebar-tabs', 'tab-explorer', 'tab-lines'];
 const REPERTOIRE_ELEMENTS = ['system-picker', 'config-inline'];
 
 let activeTab: TabId = 'explorer';

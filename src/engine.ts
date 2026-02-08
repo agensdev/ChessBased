@@ -4,7 +4,15 @@ export interface EvalScore {
   depth: number;
 }
 
+export interface EngineLine {
+  rank: number;       // multipv index (1-based)
+  score: EvalScore;
+  pv: string[];       // UCI moves: ["e2e4", "e7e5", "g1f3"]
+  depth: number;
+}
+
 type EvalCallback = (score: EvalScore) => void;
+type LinesCallback = (lines: EngineLine[]) => void;
 
 const SEARCH_DEPTH = 18;
 const STOP_TIMEOUT_MS = 10_000;
@@ -34,6 +42,12 @@ let currentCallback: EvalCallback | null = null;
 let stopTimeout: ReturnType<typeof setTimeout> | null = null;
 let stopping: Promise<void> | null = null; // non-null while waiting for stop to complete
 
+let linesCallback: LinesCallback | null = null;
+let currentLines: Map<number, EngineLine> = new Map();
+let currentMultiPV = 1;
+let searchBlackToMove = false;
+let pendingLinesCallback: LinesCallback | null = null;
+
 // Start idle
 idle.resolve();
 
@@ -50,7 +64,21 @@ function onMessage(e: MessageEvent): void {
 
   if (line.startsWith('info') && line.includes(' score ') && currentCallback) {
     const score = parseScore(line);
-    if (score) currentCallback(score);
+    if (score) {
+      // Only call the main eval callback for the best line (multipv 1 or absent)
+      const mpvMatch = line.match(/\bmultipv (\d+)/);
+      const mpvRank = mpvMatch ? parseInt(mpvMatch[1]) : 1;
+      if (mpvRank === 1) currentCallback(score);
+
+      // Accumulate lines for the lines panel
+      if (linesCallback) {
+        const pvMatch = line.match(/\bpv (.+)/);
+        const pv = pvMatch ? pvMatch[1].split(/\s+/) : [];
+        currentLines.set(mpvRank, { rank: mpvRank, score, pv, depth: score.depth });
+        const sorted = Array.from(currentLines.values()).sort((a, b) => a.rank - b.rank);
+        linesCallback(sorted);
+      }
+    }
   }
 
   if (line.startsWith('bestmove')) {
@@ -158,12 +186,32 @@ async function stopCurrent(): Promise<void> {
 async function startSearch(fen: string, onUpdate: EvalCallback): Promise<void> {
   // Normalize scores to white's perspective
   const blackToMove = fen.split(' ')[1] === 'b';
+  searchBlackToMove = blackToMove;
   currentCallback = (score: EvalScore) => {
     onUpdate({
       ...score,
       value: blackToMove ? -score.value : score.value,
     });
   };
+
+  // Clear accumulated lines for this new search
+  currentLines = new Map();
+
+  // Wrap the lines callback to normalize scores to white's perspective
+  if (pendingLinesCallback) {
+    const rawCb = pendingLinesCallback;
+    linesCallback = (lines: EngineLine[]) => {
+      rawCb(lines.map(l => ({
+        ...l,
+        score: {
+          ...l.score,
+          value: searchBlackToMove ? -l.score.value : l.score.value,
+        },
+      })));
+    };
+  } else {
+    linesCallback = null;
+  }
 
   // Fresh deferred for this search
   idle = deferred();
@@ -179,11 +227,25 @@ export function initEngine(): void {
   if (worker) return;
   worker = createWorker();
   send('uci');
+  if (currentMultiPV > 1) {
+    send(`setoption name MultiPV value ${currentMultiPV}`);
+  }
   send('isready');
 }
 
-export async function evaluate(fen: string, onUpdate: EvalCallback): Promise<void> {
+export function setMultiPV(count: number): void {
+  const clamped = Math.max(1, Math.min(count, 5));
+  if (clamped === currentMultiPV) return;
+  currentMultiPV = clamped;
+  if (worker) {
+    send(`setoption name MultiPV value ${currentMultiPV}`);
+  }
+}
+
+export async function evaluate(fen: string, onUpdate: EvalCallback, onLines?: LinesCallback): Promise<void> {
   if (!worker) initEngine();
+
+  pendingLinesCallback = onLines ?? null;
 
   // If a search is running, queue this and stop the current one.
   // If something is already queued, replace it (only latest matters).

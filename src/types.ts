@@ -48,6 +48,7 @@ export interface AppConfig {
   enabledAlerts: AlertType[];
   showMoveBadges: boolean;
   showExplorer: boolean;
+  engineLineCount: number;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -61,6 +62,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   enabledAlerts: [],
   showMoveBadges: false,
   showExplorer: false,
+  engineLineCount: 0,
 };
 
 export const RATING_OPTIONS = [400, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500];

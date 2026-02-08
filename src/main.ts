@@ -26,12 +26,14 @@ import {
   initSidebarTabs,
   onTabChange,
   getActiveTab,
+  renderEngineLines,
+  setEngineLinesVisible,
 } from './ui';
 import { renderTreePanel, refreshTree } from './tree-ui';
 import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
-import { initEngine, evaluate, winningChance, formatScore } from './engine';
-import type { EvalScore } from './engine';
+import { initEngine, evaluate, winningChance, formatScore, setMultiPV } from './engine';
+import type { EvalScore, EngineLine } from './engine';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -82,8 +84,16 @@ function setEvalBarVisible(visible: boolean): void {
 
 function requestEval(fen: string): void {
   setEvalWinPct(null); // clear stale eval while new one computes
-  if (!config.showEval) return;
-  evaluate(fen, updateEvalBar);
+  const linesEnabled = config.engineLineCount > 0;
+  if (!config.showEval && !linesEnabled) return;
+
+  setMultiPV(linesEnabled ? config.engineLineCount : 1);
+
+  const linesCallback = linesEnabled
+    ? (lines: EngineLine[]) => renderEngineLines(lines, fen)
+    : undefined;
+
+  evaluate(fen, config.showEval ? updateEvalBar : () => {}, linesCallback);
 }
 
 function refreshExplorerMode(): void {
@@ -132,15 +142,21 @@ function boot(): void {
     config,
     (newConfig: AppConfig) => {
       const evalToggled = newConfig.showEval !== config.showEval;
+      const linesToggled = newConfig.engineLineCount !== config.engineLineCount;
       config = { ...newConfig };
       saveConfig(config);
       updateConfig(config);
       refreshExplorerMode();
       setEvalBarVisible(config.showEval);
+      setEngineLinesVisible(config.engineLineCount > 0);
       updateExplorerPanel();
       updateAlertBanner();
       updateMoveList();
-      if (evalToggled && config.showEval) {
+      if (linesToggled && config.engineLineCount === 0) {
+        renderEngineLines([], '');
+        setMultiPV(1);
+      }
+      if ((evalToggled && config.showEval) || (linesToggled && config.engineLineCount > 0)) {
         requestEval(getViewedFen());
       }
     },
@@ -208,6 +224,7 @@ function boot(): void {
   updateMoveList();
   updateExplorerPanel();
   setEvalBarVisible(config.showEval);
+  setEngineLinesVisible(config.engineLineCount > 0);
   requestEval(STARTING_FEN);
 
   initMobileTabs();

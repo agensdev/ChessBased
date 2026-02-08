@@ -24,6 +24,12 @@ import { initLibraryModal, openLibraryModal } from './opening-library';
 import { exportActiveOpening, exportAll } from './pgn-export';
 import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
+import { formatScore } from './engine';
+import type { EngineLine } from './engine';
+import { Chess } from 'chessops/chess';
+import { parseFen } from 'chessops/fen';
+import { parseUci } from 'chessops/util';
+import { makeSan } from 'chessops/san';
 
 type ContinueCallback = () => void;
 type OpeningChangeCallback = () => void;
@@ -723,7 +729,20 @@ function renderConfigPanel(): void {
     configChangeCb(currentConfig);
   });
 
-  displayGrid.append(evalChip, badgesChip, explorerChip);
+  const engineLinesChip = document.createElement('button');
+  const elCount = currentConfig.engineLineCount;
+  engineLinesChip.className = `chip${elCount > 0 ? ' selected' : ''}`;
+  engineLinesChip.textContent = elCount > 0 ? `${elCount} engine line${elCount > 1 ? 's' : ''}` : 'Engine lines';
+  engineLinesChip.setAttribute('data-tooltip', 'Cycle: off → 1 → 2 → 3 lines');
+  engineLinesChip.addEventListener('click', () => {
+    currentConfig.engineLineCount = currentConfig.engineLineCount >= 3 ? 0 : currentConfig.engineLineCount + 1;
+    const n = currentConfig.engineLineCount;
+    engineLinesChip.classList.toggle('selected', n > 0);
+    engineLinesChip.textContent = n > 0 ? `${n} engine line${n > 1 ? 's' : ''}` : 'Engine lines';
+    configChangeCb(currentConfig);
+  });
+
+  displayGrid.append(evalChip, badgesChip, explorerChip, engineLinesChip);
   indicatorSection.append(indicatorHeader, displayGrid);
 
   // ── Alerts section ──
@@ -1250,6 +1269,100 @@ export function updateAlertBanner(): void {
       : 'orange';
     setAutoShapes([{ orig, dest, brush }]);
   });
+}
+
+function uciToSan(fen: string, uciMoves: string[], maxMoves = 6): string[] {
+  const setup = parseFen(fen);
+  if (!setup.isOk) return uciMoves.slice(0, maxMoves);
+  const pos = Chess.fromSetup(setup.value);
+  if (!pos.isOk) return uciMoves.slice(0, maxMoves);
+
+  const chess = pos.value;
+  const sans: string[] = [];
+  for (let i = 0; i < Math.min(uciMoves.length, maxMoves); i++) {
+    const move = parseUci(uciMoves[i]);
+    if (!move) break;
+    try {
+      const san = makeSan(chess, move);
+      sans.push(san);
+      chess.play(move);
+    } catch {
+      break;
+    }
+  }
+  return sans;
+}
+
+export function renderEngineLines(lines: EngineLine[], fen: string): void {
+  const el = document.getElementById('engine-lines');
+  if (!el) return;
+
+  if (lines.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const sideToMove = fen.split(' ')[1];
+  const moveNum = parseInt(fen.split(' ')[5] || '1');
+
+  let html = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const evalText = formatScore(line.score);
+    const isPositive = line.score.type === 'mate' ? line.score.value > 0 : line.score.value > 0;
+    const isNeutral = line.score.type === 'cp' && Math.abs(line.score.value) < 20;
+    const evalClass = isNeutral ? 'neutral' : isPositive ? 'positive' : 'negative';
+    const bestClass = i === 0 ? ' engine-line-best' : '';
+
+    const sans = uciToSan(fen, line.pv);
+    let moveStr = '';
+    let curMoveNum = moveNum;
+    let whiteToMove = sideToMove === 'w';
+    for (let j = 0; j < sans.length; j++) {
+      if (whiteToMove) {
+        moveStr += `${curMoveNum}.\u2009${sans[j]} `;
+      } else {
+        if (j === 0) moveStr += `${curMoveNum}...\u2009`;
+        moveStr += `${sans[j]} `;
+        curMoveNum++;
+      }
+      whiteToMove = !whiteToMove;
+    }
+
+    const firstUci = line.pv[0] || '';
+    html += `<div class="engine-line${bestClass}" data-uci="${firstUci}">
+      <span class="engine-line-rank">${line.rank}</span>
+      <span class="engine-line-eval ${evalClass}">${evalText}</span>
+      <span class="engine-line-moves">${moveStr.trim()}</span>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+
+  // Hover arrows + click to play (same pattern as explorer)
+  el.querySelectorAll('.engine-line').forEach((row) => {
+    const uci = (row as HTMLElement).dataset.uci;
+    if (!uci || uci.length < 4) return;
+    const orig = uci.slice(0, 2) as Key;
+    const dest = uci.slice(2, 4) as Key;
+
+    row.addEventListener('mouseenter', () => {
+      setAutoShapes([{ orig, dest, brush: 'blue' }]);
+    });
+    row.addEventListener('mouseleave', () => {
+      setAutoShapes([]);
+    });
+    if (explorerMoveClickCb) {
+      row.addEventListener('click', () => {
+        explorerMoveClickCb!(uci);
+      });
+    }
+  });
+}
+
+export function setEngineLinesVisible(visible: boolean): void {
+  const el = document.getElementById('engine-lines');
+  if (el) el.classList.toggle('hidden', !visible);
 }
 
 export function updateExplorerPanel(): void {
