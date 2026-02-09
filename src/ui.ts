@@ -2,6 +2,7 @@ import type {
   AppConfig,
   AlertType,
   BotWeighting,
+  ExplorerMove,
   ExplorerResponse,
   GamePhase,
   MoveBadge,
@@ -10,7 +11,7 @@ import type {
 } from './types';
 import { ALL_ALERT_TYPES, RATING_OPTIONS, SPEED_OPTIONS } from './types';
 import type { Key } from '@lichess-org/chessground/types';
-import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes } from './board';
+import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes, getOrientation } from './board';
 import {
   isMoveLocked, lockMove, unlockMove, getLockedMoves,
   getOpeningNames, getActiveOpening, switchOpening, createOpening, deleteOpening, renameOpening,
@@ -30,9 +31,17 @@ import { Chess } from 'chessops/chess';
 import { parseFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
 import { makeSan } from 'chessops/san';
+import {
+  getExplorerMode, setExplorerMode, hasPersonalData, getPersonalConfig,
+  queryPersonalExplorer, clearPersonalData, importFromLichess, importFromChesscom,
+  initPersonalExplorer, getPersonalStats, setPersonalFilters, getPersonalFilters,
+  getFilteredGameCount,
+  type ExplorerMode, type Platform, type LichessFilters,
+} from './personal-explorer';
 
 type ContinueCallback = () => void;
 type OpeningChangeCallback = () => void;
+type ModeChangeCallback = () => void;
 
 type ConfigChangeCallback = (config: AppConfig) => void;
 type NewGameCallback = () => void;
@@ -45,6 +54,7 @@ let flipCb: FlipCallback;
 let explorerMoveClickCb: ExplorerMoveClickCallback | null = null;
 let continueCb: ContinueCallback | null = null;
 let openingChangeCb: OpeningChangeCallback | null = null;
+let modeChangeCb: ModeChangeCallback | null = null;
 let currentConfig: AppConfig;
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -64,6 +74,7 @@ export function initUI(
   onExplorerMoveClick?: ExplorerMoveClickCallback,
   onContinue?: ContinueCallback,
   onRepertoireChange?: OpeningChangeCallback,
+  onModeChange?: ModeChangeCallback,
 ): void {
   currentConfig = { ...config };
   configChangeCb = onConfigChange;
@@ -72,7 +83,12 @@ export function initUI(
   explorerMoveClickCb = onExplorerMoveClick ?? null;
   continueCb = onContinue ?? null;
   openingChangeCb = onRepertoireChange ?? null;
+  modeChangeCb = onModeChange ?? null;
 
+  initPersonalExplorer().then(() => {
+    // Re-render explorer panel once DB is loaded, in case user is already in personal mode
+    if (getExplorerMode() === 'personal') updateExplorerPanel();
+  });
   renderSystemPicker();
   renderControls();
   renderConfigPanel();
@@ -974,6 +990,34 @@ function renderDrawerContent(): void {
 
   el.append(topNSection, playRateSection, weightingSection, ratingsSection, speedsSection);
 
+  // ── My Games ──
+  if (hasPersonalData()) {
+    const myGamesHeader = document.createElement('h3');
+    myGamesHeader.className = 'config-section';
+    myGamesHeader.textContent = 'My Games';
+    myGamesHeader.style.fontSize = '14px';
+    myGamesHeader.style.textTransform = 'uppercase';
+    myGamesHeader.style.letterSpacing = '0.06em';
+    myGamesHeader.style.color = 'var(--text-muted)';
+    myGamesHeader.style.marginBottom = '12px';
+    myGamesHeader.style.marginTop = '20px';
+    el.append(myGamesHeader);
+
+    const clearSection = document.createElement('div');
+    clearSection.className = 'config-section';
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn btn-danger';
+    clearBtn.textContent = 'Clear imported games';
+    clearBtn.style.width = '100%';
+    clearBtn.addEventListener('click', async () => {
+      await clearPersonalData();
+      personalFiltersOpen = false;
+      updateExplorerPanel();
+      renderDrawerContent();
+    });
+    clearSection.append(clearBtn);
+    el.append(clearSection);
+  }
 }
 
 export function updateStatus(phase: GamePhase, openingName?: string): void {
@@ -1365,43 +1409,495 @@ export function setEngineLinesVisible(visible: boolean): void {
   if (el) el.classList.toggle('hidden', !visible);
 }
 
-export function updateExplorerPanel(): void {
-  const el = document.getElementById('explorer-moves')!;
-  const showContent = shouldShowExplorerContent();
+function renderSourceToggle(): string {
+  const mode = getExplorerMode();
+  return `<div class="explorer-source-toggle">
+    <div class="segment-picker">
+      <button class="segment-btn${mode === 'database' ? ' selected' : ''}" data-mode="database">Database</button>
+      <button class="segment-btn${mode === 'personal' ? ' selected' : ''}" data-mode="personal">My Games</button>
+    </div>
+  </div>`;
+}
 
-  const { data, fen } = getExplorerData();
-  const moves = data?.moves ?? [];
-
-  // Skeleton mode: always show the panel structure, but hide move content
-  if (!showContent) {
-    let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
-    html += '<div class="explorer-list explorer-skeleton">';
-    for (let i = 0; i < EXPLORER_ROWS; i++) {
-      html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
-    }
-    html += '<div class="explorer-hint">Click to show moves</div>';
-    html += '</div>';
-    el.innerHTML = html;
-
-    // Click anywhere on skeleton to reveal
-    el.querySelector('.explorer-list')!.addEventListener('click', () => {
-      explorerRevealed = true;
+function wireSourceToggle(el: HTMLElement): void {
+  el.querySelectorAll('.explorer-source-toggle .segment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = (btn as HTMLElement).dataset.mode as ExplorerMode;
+      if (mode === getExplorerMode()) return;
+      setExplorerMode(mode);
+      modeChangeCb?.();
       updateExplorerPanel();
     });
+  });
+}
+
+let personalFiltersOpen = false;
+let personalMatchBoard = true; // auto-filter color to match board orientation
+let filterClickOutsideHandler: ((e: MouseEvent) => void) | null = null;
+
+function renderPersonalInfoBar(el: HTMLElement): void {
+  const cfg = getPersonalConfig();
+  if (!cfg) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'personal-info-bar';
+
+  const text = document.createElement('span');
+  text.className = 'personal-info-text';
+  const platform = cfg.platform === 'lichess' ? 'lichess' : 'chess.com';
+  const filtered = getFilteredGameCount();
+  const total = cfg.gameCount;
+  const countText = filtered < total
+    ? `${formatGames(filtered)}/${formatGames(total)} games`
+    : `${formatGames(total)} games`;
+  text.innerHTML = `<span class="personal-username">${platform}: ${cfg.username}</span> &middot; ${countText}`;
+  bar.append(text);
+
+  const filterBtn = document.createElement('button');
+  filterBtn.className = personalFiltersOpen ? 'active' : '';
+  filterBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>`;
+  filterBtn.setAttribute('data-tooltip', 'Filter games');
+  filterBtn.addEventListener('click', () => {
+    personalFiltersOpen = !personalFiltersOpen;
+    updateExplorerPanel();
+  });
+  bar.append(filterBtn);
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.textContent = 'Refresh';
+  refreshBtn.setAttribute('data-tooltip', 'Import new games');
+  refreshBtn.addEventListener('click', () => openPersonalImportModal());
+  bar.append(refreshBtn);
+
+  el.append(bar);
+}
+
+function renderPersonalColorNote(el: HTMLElement): void {
+  const orientation = getOrientation();
+  const note = document.createElement('label');
+  note.className = 'personal-color-note';
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = personalMatchBoard;
+  checkbox.addEventListener('change', () => {
+    personalMatchBoard = checkbox.checked;
+    updateExplorerPanel();
+  });
+
+  const text = document.createElement('span');
+  text.textContent = personalMatchBoard
+    ? `Showing games as ${orientation}`
+    : 'Showing all games';
+
+  note.append(checkbox, text);
+  el.append(note);
+}
+
+function renderPersonalFilterPanel(el: HTMLElement): void {
+  // Clean up previous click-outside handler
+  if (filterClickOutsideHandler) {
+    document.removeEventListener('mousedown', filterClickOutsideHandler);
+    filterClickOutsideHandler = null;
+  }
+
+  if (!personalFiltersOpen) return;
+  const stats = getPersonalStats();
+  if (!stats) return;
+  const filters = getPersonalFilters();
+
+  const panel = document.createElement('div');
+  panel.className = 'personal-filter-panel';
+
+  // Time class chips
+  if (stats.timeClasses.length > 1) {
+    const section = document.createElement('div');
+    section.className = 'personal-filter-section';
+    section.innerHTML = `<div class="personal-filter-label">Time control</div>`;
+    const chips = document.createElement('div');
+    chips.className = 'chip-grid';
+    const activeTC = filters.timeClasses ?? [];
+    for (const tc of stats.timeClasses) {
+      const chip = document.createElement('button');
+      chip.className = 'chip chip-sm' + (activeTC.length === 0 || activeTC.includes(tc) ? ' selected' : '');
+      chip.dataset.tc = tc;
+      chip.textContent = tc.charAt(0).toUpperCase() + tc.slice(1);
+      chip.addEventListener('click', () => {
+        chip.classList.toggle('selected');
+        applyFiltersFromPanel(panel);
+      });
+      chips.append(chip);
+    }
+    section.append(chips);
+    panel.append(section);
+  }
+
+  // Rating range
+  if (stats.minRating < stats.maxRating) {
+    const section = document.createElement('div');
+    section.className = 'personal-filter-section';
+    section.innerHTML = `<div class="personal-filter-label">Your rating</div>`;
+    const row = document.createElement('div');
+    row.className = 'personal-filter-range';
+    const minInput = document.createElement('input');
+    minInput.type = 'number';
+    minInput.placeholder = String(stats.minRating);
+    minInput.className = 'filter-input';
+    minInput.id = 'filter-min-rating';
+    if (filters.minRating != null) minInput.value = String(filters.minRating);
+    const sep = document.createElement('span');
+    sep.className = 'filter-range-sep';
+    sep.textContent = '–';
+    const maxInput = document.createElement('input');
+    maxInput.type = 'number';
+    maxInput.placeholder = String(stats.maxRating);
+    maxInput.className = 'filter-input';
+    maxInput.id = 'filter-max-rating';
+    if (filters.maxRating != null) maxInput.value = String(filters.maxRating);
+
+    const applyRating = () => applyFiltersFromPanel(panel);
+    minInput.addEventListener('change', applyRating);
+    maxInput.addEventListener('change', applyRating);
+
+    row.append(minInput, sep, maxInput);
+    section.append(row);
+    panel.append(section);
+  }
+
+  // Date range
+  if (stats.months.length > 1) {
+    const section = document.createElement('div');
+    section.className = 'personal-filter-section';
+    section.innerHTML = `<div class="personal-filter-label">Date range</div>`;
+
+    // Quick presets
+    const now = new Date();
+    const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const threeAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const threeMonth = `${threeAgo.getFullYear()}-${String(threeAgo.getMonth() + 1).padStart(2, '0')}`;
+    const yearStart = `${now.getFullYear()}-01`;
+
+    const presets: { label: string; since: string; until: string }[] = [
+      { label: 'This month', since: curMonth, until: curMonth },
+      { label: 'Last 3 mo', since: threeMonth, until: curMonth },
+      { label: 'This year', since: yearStart, until: curMonth },
+    ];
+
+    const presetRow = document.createElement('div');
+    presetRow.className = 'chip-grid';
+    for (const preset of presets) {
+      const chip = document.createElement('button');
+      chip.className = 'chip chip-sm';
+      if (filters.sinceMonth === preset.since && filters.untilMonth === preset.until) {
+        chip.classList.add('selected');
+      }
+      chip.textContent = preset.label;
+      chip.addEventListener('click', () => {
+        const current = getPersonalFilters();
+        // Toggle off if already selected
+        if (current.sinceMonth === preset.since && current.untilMonth === preset.until) {
+          setPersonalFilters({ ...current, sinceMonth: undefined, untilMonth: undefined });
+        } else {
+          setPersonalFilters({ ...current, sinceMonth: preset.since, untilMonth: preset.until });
+        }
+        refreshPersonalMoves();
+        // Rebuild filter panel to update preset + picker state
+        const wrap = panel.parentElement!;
+        panel.remove();
+        renderPersonalFilterPanel(wrap);
+      });
+      presetRow.append(chip);
+    }
+    section.append(presetRow);
+
+    // Custom pickers
+    const row = document.createElement('div');
+    row.className = 'personal-filter-range';
+
+    const minMonth = stats.months[0];
+    const maxMonth = stats.months[stats.months.length - 1];
+    const applyDate = () => applyFiltersFromPanel(panel);
+
+    const sincePicker = createMonthPicker(
+      'filter-since', filters.sinceMonth ?? '', minMonth, maxMonth, 'From…', applyDate,
+    );
+    const sep = document.createElement('span');
+    sep.className = 'filter-range-sep';
+    sep.textContent = '–';
+    const untilPicker = createMonthPicker(
+      'filter-until', filters.untilMonth ?? '', minMonth, maxMonth, 'To…', applyDate,
+    );
+
+    row.append(sincePicker, sep, untilPicker);
+    section.append(row);
+    panel.append(section);
+  }
+
+  // Reset button (color is managed by the board-matching checkbox, not here)
+  const hasActiveFilters = (filters.timeClasses && filters.timeClasses.length > 0) ||
+    filters.minRating != null || filters.maxRating != null ||
+    filters.sinceMonth || filters.untilMonth;
+  if (hasActiveFilters) {
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'personal-filter-reset';
+    resetBtn.textContent = 'Reset filters';
+    resetBtn.addEventListener('click', () => {
+      setPersonalFilters({});
+      updateExplorerPanel();
+    });
+    panel.append(resetBtn);
+  }
+
+  el.append(panel);
+
+  // Close on click outside
+  requestAnimationFrame(() => {
+    filterClickOutsideHandler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!panel.contains(target) && !(target as HTMLElement).closest?.('.personal-info-bar')) {
+        personalFiltersOpen = false;
+        document.removeEventListener('mousedown', filterClickOutsideHandler!);
+        filterClickOutsideHandler = null;
+        updateExplorerPanel();
+      }
+    };
+    document.addEventListener('mousedown', filterClickOutsideHandler);
+  });
+}
+
+function applyFiltersFromPanel(panel: HTMLElement): void {
+  // Collect time class chips
+  const allChips = panel.querySelectorAll('.chip[data-tc]');
+  const selectedChips = panel.querySelectorAll('.chip[data-tc].selected');
+  let timeClasses: string[] | undefined;
+  if (selectedChips.length > 0 && selectedChips.length < allChips.length) {
+    timeClasses = Array.from(selectedChips).map(c => (c as HTMLElement).dataset.tc!);
+  }
+
+  // Collect rating range
+  const minEl = panel.querySelector('#filter-min-rating') as HTMLInputElement | null;
+  const maxEl = panel.querySelector('#filter-max-rating') as HTMLInputElement | null;
+  const minRating = minEl?.value ? parseInt(minEl.value) : undefined;
+  const maxRating = maxEl?.value ? parseInt(maxEl.value) : undefined;
+
+  // Collect date range (from custom month picker data attributes)
+  const sinceEl = panel.querySelector('#filter-since') as HTMLElement | null;
+  const untilEl = panel.querySelector('#filter-until') as HTMLElement | null;
+  const sinceMonth = sinceEl?.dataset.value || undefined;
+  const untilMonth = untilEl?.dataset.value || undefined;
+
+  setPersonalFilters({ timeClasses, minRating, maxRating, sinceMonth, untilMonth });
+  refreshPersonalMoves();
+}
+
+/** Refresh only the move rows + info text without rebuilding the filter panel */
+function refreshPersonalMoves(): void {
+  const el = document.getElementById('explorer-moves')!;
+  const { fen } = getExplorerData();
+
+  // Update info bar text
+  const infoText = el.querySelector('.personal-info-text');
+  if (infoText) {
+    const cfg = getPersonalConfig();
+    if (cfg) {
+      const platform = cfg.platform === 'lichess' ? 'lichess' : 'chess.com';
+      const filtered = getFilteredGameCount();
+      const total = cfg.gameCount;
+      const countText = filtered < total
+        ? `${formatGames(filtered)}/${formatGames(total)} games`
+        : `${formatGames(total)} games`;
+      infoText.innerHTML = `<span class="personal-username">${platform}: ${cfg.username}</span> &middot; ${countText}`;
+    }
+  }
+
+  // Remove old move rows, empty state, and color note
+  el.querySelectorAll('.explorer-header, .explorer-list, .personal-empty-state, .personal-color-note').forEach(e => e.remove());
+
+  const personalData = queryPersonalExplorer(fen);
+  const moves = personalData?.moves ?? [];
+  if (moves.length === 0) {
+    const noData = document.createElement('div');
+    noData.className = 'personal-empty-state';
+    noData.style.padding = '16px';
+    noData.textContent = 'No games in this position.';
+    el.append(noData);
+    renderPersonalColorNote(el);
     return;
   }
 
+  renderMoveRows(moves, fen, null, el);
+  renderPersonalColorNote(el);
+}
+
+function renderPersonalEmptyState(el: HTMLElement): void {
+  const empty = document.createElement('div');
+  empty.className = 'personal-empty-state';
+  empty.innerHTML = `<div>No games imported yet.</div>`;
+  const importBtn = document.createElement('button');
+  importBtn.className = 'btn btn-primary';
+  importBtn.textContent = 'Import games';
+  importBtn.addEventListener('click', () => openPersonalImportModal());
+  empty.append(importBtn);
+  el.append(empty);
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function createMonthPicker(
+  id: string,
+  value: string,
+  minMonth: string,
+  maxMonth: string,
+  placeholder: string,
+  onChange: () => void,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'month-picker';
+  wrap.id = id;
+  wrap.dataset.value = value;
+
+  const trigger = document.createElement('button');
+  trigger.className = 'month-picker-trigger';
+  trigger.type = 'button';
+  if (value) {
+    const [y, m] = value.split('-');
+    trigger.textContent = `${MONTH_ABBR[parseInt(m) - 1]} ${y}`;
+    trigger.classList.add('has-value');
+  } else {
+    trigger.textContent = placeholder;
+  }
+
+  let dropdown: HTMLElement | null = null;
+  let closeHandler: ((e: MouseEvent) => void) | null = null;
+
+  const minY = parseInt(minMonth.split('-')[0]);
+  const maxY = parseInt(maxMonth.split('-')[0]);
+
+  function isInRange(year: number, month: number): boolean {
+    const key = `${year}-${String(month).padStart(2, '0')}`;
+    return key >= minMonth && key <= maxMonth;
+  }
+
+  function openDropdown() {
+    if (dropdown) { closeDropdown(); return; }
+
+    const currentValue = wrap.dataset.value;
+    let viewYear = currentValue ? parseInt(currentValue.split('-')[0]) : maxY;
+
+    dropdown = document.createElement('div');
+    dropdown.className = 'month-picker-dropdown';
+
+    function render() {
+      dropdown!.innerHTML = '';
+
+      const header = document.createElement('div');
+      header.className = 'month-picker-header';
+
+      const prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'month-picker-nav';
+      prevBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>';
+      prevBtn.disabled = viewYear <= minY;
+      prevBtn.addEventListener('click', (e) => { e.stopPropagation(); viewYear--; render(); });
+
+      const yearLabel = document.createElement('span');
+      yearLabel.className = 'month-picker-year';
+      yearLabel.textContent = String(viewYear);
+
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'month-picker-nav';
+      nextBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>';
+      nextBtn.disabled = viewYear >= maxY;
+      nextBtn.addEventListener('click', (e) => { e.stopPropagation(); viewYear++; render(); });
+
+      header.append(prevBtn, yearLabel, nextBtn);
+      dropdown!.append(header);
+
+      const grid = document.createElement('div');
+      grid.className = 'month-picker-grid';
+
+      for (let m = 1; m <= 12; m++) {
+        const key = `${viewYear}-${String(m).padStart(2, '0')}`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'month-picker-cell';
+        btn.textContent = MONTH_ABBR[m - 1];
+
+        const inRange = isInRange(viewYear, m);
+        if (!inRange) {
+          btn.disabled = true;
+          btn.classList.add('out-of-range');
+        }
+        if (key === wrap.dataset.value) {
+          btn.classList.add('selected');
+        }
+
+        if (inRange) {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            wrap.dataset.value = key;
+            trigger.textContent = `${MONTH_ABBR[m - 1]} ${viewYear}`;
+            trigger.classList.add('has-value');
+            closeDropdown();
+            onChange();
+          });
+        }
+        grid.append(btn);
+      }
+
+      dropdown!.append(grid);
+
+      // Clear button
+      if (wrap.dataset.value) {
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'month-picker-clear';
+        clearBtn.textContent = 'Clear';
+        clearBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          wrap.dataset.value = '';
+          trigger.textContent = placeholder;
+          trigger.classList.remove('has-value');
+          closeDropdown();
+          onChange();
+        });
+        dropdown!.append(clearBtn);
+      }
+    }
+
+    render();
+    wrap.append(dropdown);
+
+    requestAnimationFrame(() => {
+      closeHandler = (e: MouseEvent) => {
+        if (!wrap.contains(e.target as Node)) closeDropdown();
+      };
+      document.addEventListener('mousedown', closeHandler);
+    });
+  }
+
+  function closeDropdown() {
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+    if (closeHandler) {
+      document.removeEventListener('mousedown', closeHandler);
+      closeHandler = null;
+    }
+  }
+
+  trigger.addEventListener('click', (e) => { e.stopPropagation(); openDropdown(); });
+  wrap.append(trigger);
+  return wrap;
+}
+
+function renderMoveRows(
+  moves: ExplorerMove[],
+  fen: string,
+  analysis: PositionAnalysis | null,
+  el: HTMLElement,
+): void {
   const visibleMoves = moves.slice(0, EXPLORER_ROWS);
-
-  const totalAllMoves = moves.reduce(
-    (sum, m) => sum + m.white + m.draws + m.black,
-    0,
-  );
-
-  // Run analysis for move badges
-  const showBadges = currentConfig.showMoveBadges && moves.length > 0;
-  const result = showBadges ? currentAnalysis() : null;
-  const analysis = result?.analysis ?? null;
+  const totalAllMoves = moves.reduce((sum, m) => sum + m.white + m.draws + m.black, 0);
 
   let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
   html += '<div class="explorer-list">';
@@ -1417,7 +1913,6 @@ export function updateExplorerPanel(): void {
     const dPct = total > 0 ? Math.round((move.draws / total) * 100) : 0;
     const bPct = 100 - wPct - dPct;
 
-    // Move badge
     const badge = analysis ? getBadgeForMove(analysis, move.uci) : null;
     const badgeTooltipMap: Record<string, string> = { best: 'Best move', blunder: 'Mistake', trap: 'Popular trap' };
     const badgeTooltipAttr = badge && badge !== 'book' && badgeTooltipMap[badge] ? ` data-tooltip="${badgeTooltipMap[badge]}"` : '';
@@ -1444,24 +1939,29 @@ export function updateExplorerPanel(): void {
     </div>`;
   }
 
-  // Pad to fixed row count
   for (let i = visibleMoves.length; i < EXPLORER_ROWS; i++) {
     html += '<div class="explorer-move empty-row">&nbsp;</div>';
   }
 
   html += '</div>';
-  el.innerHTML = html;
 
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  while (container.firstChild) el.append(container.firstChild);
 
+  wireExplorerRowEvents(el, fen);
+}
+
+function wireExplorerRowEvents(el: HTMLElement, fen: string): void {
   el.querySelectorAll('.lock-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const target = e.currentTarget as HTMLElement;
       const uci = target.dataset.uci!;
-      const fen = decodeURIComponent(target.dataset.fen!);
-      if (isMoveLocked(fen, uci)) {
-        unlockMove(fen, uci);
+      const btnFen = decodeURIComponent(target.dataset.fen!);
+      if (isMoveLocked(btnFen, uci)) {
+        unlockMove(btnFen, uci);
       } else {
-        if (lockMove(fen, uci)) {
+        if (lockMove(btnFen, uci)) {
           renderSystemPicker();
           openingChangeCb?.();
         }
@@ -1470,7 +1970,6 @@ export function updateExplorerPanel(): void {
     });
   });
 
-  // Hover arrows — show move on board when hovering explorer rows
   el.querySelectorAll('.explorer-move:not(.empty-row)').forEach((row) => {
     row.addEventListener('mouseenter', () => {
       const uci = (row as HTMLElement).dataset.uci;
@@ -1487,13 +1986,100 @@ export function updateExplorerPanel(): void {
   if (explorerMoveClickCb) {
     el.querySelectorAll('.explorer-move').forEach((row) => {
       row.addEventListener('click', (e) => {
-        // Don't trigger if clicking the lock button
         if ((e.target as HTMLElement).closest('.lock-btn')) return;
         const uci = (row as HTMLElement).dataset.uci!;
         explorerMoveClickCb!(uci);
       });
     });
   }
+}
+
+export function updateExplorerPanel(): void {
+  const el = document.getElementById('explorer-moves')!;
+  el.innerHTML = '';
+
+  // Always render source toggle
+  const toggleDiv = document.createElement('div');
+  toggleDiv.innerHTML = renderSourceToggle();
+  while (toggleDiv.firstChild) el.append(toggleDiv.firstChild);
+  wireSourceToggle(el);
+
+  const mode = getExplorerMode();
+  const { fen } = getExplorerData();
+
+  if (mode === 'personal') {
+    if (!hasPersonalData()) {
+      renderPersonalEmptyState(el);
+      return;
+    }
+
+    // Auto-apply board orientation as color filter
+    if (personalMatchBoard) {
+      const orientation = getOrientation();
+      const current = getPersonalFilters();
+      if (current.color !== orientation) {
+        setPersonalFilters({ ...current, color: orientation });
+      }
+    } else {
+      const current = getPersonalFilters();
+      if (current.color) {
+        setPersonalFilters({ ...current, color: undefined });
+      }
+    }
+
+    const infoWrap = document.createElement('div');
+    infoWrap.className = 'personal-info-wrap';
+    renderPersonalInfoBar(infoWrap);
+    renderPersonalFilterPanel(infoWrap);
+    el.append(infoWrap);
+
+    const personalData = queryPersonalExplorer(fen);
+    const moves = personalData?.moves ?? [];
+    if (moves.length === 0) {
+      const noData = document.createElement('div');
+      noData.className = 'personal-empty-state';
+      noData.style.padding = '16px';
+      noData.textContent = 'No games in this position.';
+      el.append(noData);
+      renderPersonalColorNote(el);
+      return;
+    }
+
+    // No analysis badges in personal mode
+    renderMoveRows(moves, fen, null, el);
+    renderPersonalColorNote(el);
+    return;
+  }
+
+  // Database mode — original logic
+  const showContent = shouldShowExplorerContent();
+  const { data } = getExplorerData();
+  const moves = data?.moves ?? [];
+
+  if (!showContent) {
+    let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+    html += '<div class="explorer-list explorer-skeleton">';
+    for (let i = 0; i < EXPLORER_ROWS; i++) {
+      html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
+    }
+    html += '<div class="explorer-hint">Click to show moves</div>';
+    html += '</div>';
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    while (container.firstChild) el.append(container.firstChild);
+
+    el.querySelector('.explorer-list')!.addEventListener('click', () => {
+      explorerRevealed = true;
+      updateExplorerPanel();
+    });
+    return;
+  }
+
+  const showBadges = currentConfig.showMoveBadges && moves.length > 0;
+  const result = showBadges ? currentAnalysis() : null;
+  const analysis = result?.analysis ?? null;
+
+  renderMoveRows(moves, fen, analysis, el);
 }
 
 function badgeSymbol(badge: MoveBadge): string {
@@ -1635,6 +2221,167 @@ function doPgnImport(): void {
   openingChangeCb?.();
 
   setTimeout(closePgnModal, 1500);
+}
+
+// ── Personal Games Import Modal ──
+
+let personalModalInitialized = false;
+let importAbortController: AbortController | null = null;
+let selectedPlatform: Platform = 'lichess';
+
+function initPersonalImportModal(): void {
+  if (personalModalInitialized) return;
+  personalModalInitialized = true;
+
+  document.getElementById('personal-import-close')!.addEventListener('click', closePersonalImportModal);
+  document.getElementById('personal-import-overlay')!.addEventListener('click', closePersonalImportModal);
+
+  // Platform toggle
+  document.querySelectorAll('#personal-import-modal .segment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const platform = (btn as HTMLElement).dataset.platform as Platform;
+      if (platform === selectedPlatform) return;
+      selectedPlatform = platform;
+      document.querySelectorAll('#personal-import-modal .segment-btn').forEach(b =>
+        b.classList.toggle('selected', (b as HTMLElement).dataset.platform === platform)
+      );
+      updateImportFiltersVisibility();
+    });
+  });
+
+  // Speed filter chip toggles
+  document.querySelectorAll('#personal-filters .chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('selected'));
+  });
+
+  document.getElementById('personal-import-btn')!.addEventListener('click', doPersonalImport);
+  document.getElementById('personal-import-cancel')!.addEventListener('click', () => {
+    importAbortController?.abort();
+  });
+
+  document.getElementById('personal-username')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doPersonalImport();
+  });
+}
+
+function getSelectedSpeeds(): string[] {
+  const chips = document.querySelectorAll('#personal-filters .chip.selected');
+  return Array.from(chips).map(c => (c as HTMLElement).dataset.speed!);
+}
+
+function updateImportFiltersVisibility(): void {
+  const filtersEl = document.getElementById('personal-filters')!;
+  const noticeEl = document.getElementById('personal-chesscom-notice')!;
+  if (selectedPlatform === 'lichess') {
+    filtersEl.classList.remove('hidden');
+    noticeEl.classList.add('hidden');
+  } else {
+    filtersEl.classList.add('hidden');
+    noticeEl.classList.remove('hidden');
+  }
+}
+
+function openPersonalImportModal(): void {
+  initPersonalImportModal();
+  const overlay = document.getElementById('personal-import-overlay')!;
+  const modal = document.getElementById('personal-import-modal')!;
+  const resultEl = document.getElementById('personal-import-result')!;
+  const progressEl = document.getElementById('personal-import-progress')!;
+
+  // Pre-fill from existing config
+  const cfg = getPersonalConfig();
+  if (cfg) {
+    selectedPlatform = cfg.platform;
+    (document.getElementById('personal-username') as HTMLInputElement).value = cfg.username;
+    document.querySelectorAll('#personal-import-modal .segment-btn').forEach(b =>
+      b.classList.toggle('selected', (b as HTMLElement).dataset.platform === cfg.platform)
+    );
+  }
+
+  resultEl.textContent = '';
+  resultEl.className = 'pgn-result';
+  progressEl.classList.add('hidden');
+  updateImportFiltersVisibility();
+
+  overlay.classList.remove('hidden');
+  overlay.classList.add('visible');
+  modal.classList.remove('hidden');
+
+  requestAnimationFrame(() => {
+    (document.getElementById('personal-username') as HTMLInputElement).focus();
+  });
+}
+
+function closePersonalImportModal(): void {
+  importAbortController?.abort();
+  const overlay = document.getElementById('personal-import-overlay')!;
+  const modal = document.getElementById('personal-import-modal')!;
+  overlay.classList.remove('visible');
+  overlay.classList.add('hidden');
+  modal.classList.add('hidden');
+}
+
+async function doPersonalImport(): Promise<void> {
+  const usernameInput = document.getElementById('personal-username') as HTMLInputElement;
+  const resultEl = document.getElementById('personal-import-result')!;
+  const progressEl = document.getElementById('personal-import-progress')!;
+  const progressText = progressEl.querySelector('.personal-progress-text')!;
+  const progressFill = progressEl.querySelector('.personal-progress-fill')! as HTMLElement;
+  const importBtn = document.getElementById('personal-import-btn') as HTMLButtonElement;
+
+  const username = usernameInput.value.trim();
+  if (!username) {
+    resultEl.textContent = 'Please enter a username.';
+    resultEl.className = 'pgn-result error';
+    return;
+  }
+
+  importBtn.disabled = true;
+  resultEl.textContent = '';
+  resultEl.className = 'pgn-result';
+  progressEl.classList.remove('hidden');
+  progressFill.classList.add('indeterminate');
+
+  importAbortController = new AbortController();
+
+  const onProgress = (msg: string, count: number) => {
+    progressText.textContent = `${msg} (${formatGames(count)} games)`;
+  };
+
+  try {
+    let total: number;
+    if (selectedPlatform === 'lichess') {
+      const speeds = getSelectedSpeeds();
+      const filters: LichessFilters = {};
+      if (speeds.length > 0 && speeds.length < 4) {
+        filters.perfType = speeds;
+      }
+      total = await importFromLichess(username, onProgress, importAbortController.signal, filters);
+    } else {
+      total = await importFromChesscom(username, onProgress, importAbortController.signal);
+    }
+
+    progressFill.classList.remove('indeterminate');
+    progressFill.style.width = '100%';
+    resultEl.textContent = `Imported ${formatGames(total)} games from ${selectedPlatform === 'lichess' ? 'Lichess' : 'Chess.com'}.`;
+    resultEl.className = 'pgn-result success';
+
+    updateExplorerPanel();
+    setTimeout(closePersonalImportModal, 1500);
+  } catch (e: unknown) {
+    progressFill.classList.remove('indeterminate');
+    const msg = e instanceof Error ? e.message : 'Import failed';
+    if (msg !== 'Import cancelled') {
+      resultEl.textContent = msg;
+      resultEl.className = 'pgn-result error';
+    } else {
+      resultEl.textContent = 'Import cancelled.';
+      resultEl.className = 'pgn-result';
+    }
+  } finally {
+    importBtn.disabled = false;
+    importAbortController = null;
+  }
 }
 
 // ── Tooltip System ──

@@ -304,6 +304,10 @@ export function setOrientation(color: 'white' | 'black'): void {
   state.cg.set({ orientation: color });
 }
 
+export function getOrientation(): 'white' | 'black' {
+  return state?.cg.state.orientation ?? 'white';
+}
+
 export function flipBoard(): void {
   if (!state) return;
   state.cg.toggleOrientation();

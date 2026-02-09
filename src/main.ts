@@ -166,6 +166,7 @@ function boot(): void {
     },
     () => {
       flipBoard();
+      updateExplorerPanel();
     },
     (uci: string) => {
       playExplorerMove(uci);
@@ -179,6 +180,11 @@ function boot(): void {
       updateExplorerPanel();
       updateAlertBanner();
       refreshTreeIfVisible();
+    },
+    () => {
+      // Explorer mode changed — re-render panel
+      updateExplorerPanel();
+      updateAlertBanner();
     },
   );
 

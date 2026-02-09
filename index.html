@@ -109,6 +109,43 @@
         </ul>
       </div>
     </div>
+    <div id="personal-import-overlay" class="drawer-overlay hidden"></div>
+    <div id="personal-import-modal" class="pgn-modal hidden">
+      <div class="pgn-modal-header">
+        <h2>Import My Games</h2>
+        <button id="personal-import-close" class="drawer-close-btn">&times;</button>
+      </div>
+      <div class="pgn-modal-body">
+        <div class="personal-platform-toggle">
+          <div class="segment-picker">
+            <button class="segment-btn selected" data-platform="lichess">Lichess</button>
+            <button class="segment-btn" data-platform="chesscom">Chess.com</button>
+          </div>
+        </div>
+        <div class="personal-username-row">
+          <input id="personal-username" type="text" placeholder="Enter your username" />
+          <button id="personal-import-btn" class="btn btn-primary">Import</button>
+        </div>
+        <div id="personal-filters" class="personal-filters">
+          <div class="personal-filter-label">Time controls</div>
+          <div class="chip-grid personal-speed-chips">
+            <button class="chip selected" data-speed="bullet">Bullet</button>
+            <button class="chip selected" data-speed="blitz">Blitz</button>
+            <button class="chip selected" data-speed="rapid">Rapid</button>
+            <button class="chip" data-speed="classical">Classical</button>
+          </div>
+        </div>
+        <div id="personal-chesscom-notice" class="personal-chesscom-notice hidden">
+          All games are imported. Use filters in the explorer to narrow by time control, rating, or date.
+        </div>
+        <div id="personal-import-progress" class="personal-import-progress hidden">
+          <div class="personal-progress-bar"><div class="personal-progress-fill"></div></div>
+          <div class="personal-progress-text"></div>
+          <button id="personal-import-cancel" class="btn">Cancel</button>
+        </div>
+        <div id="personal-import-result" class="pgn-result"></div>
+      </div>
+    </div>
     <div id="library-overlay" class="drawer-overlay hidden"></div>
     <div id="library-modal" class="library-modal hidden">
       <div class="library-modal-header">
