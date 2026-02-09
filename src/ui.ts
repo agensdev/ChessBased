@@ -1177,8 +1177,8 @@ export function updateMoveList(): void {
   if (isViewingHistory() && continueCb) {
     actionsHtml += '<button class="btn continue-btn">Continue from here</button>';
   }
-  actionsHtml += '<button class="btn lock-line-btn" data-tooltip="Lock all moves up to here">Add line</button>';
-  actionsHtml += '<button class="btn lock-line-new-btn" data-tooltip="Lock into a new opening">Add to new</button>';
+  actionsHtml += '<button class="btn lock-line-btn" data-tooltip="Lock all moves up to here">Add to opening</button>';
+  actionsHtml += '<button class="btn lock-line-new-btn" data-tooltip="Lock into a new opening">Add new opening</button>';
   actionsEl.innerHTML = actionsHtml;
 
   const continueBtn = actionsEl.querySelector('.continue-btn');
@@ -1188,7 +1188,9 @@ export function updateMoveList(): void {
 
   function lockLineToRepertoire(forceNew: boolean): void {
     if (forceNew) {
-      createOpening();
+      const { data } = getExplorerData();
+      const openingName = data?.opening?.name;
+      createOpening(openingName);
       renderSystemPicker();
     }
     const upTo = isViewingHistory() ? vi : history.length;
