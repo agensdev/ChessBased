@@ -252,9 +252,12 @@ function boot(): void {
         }
         break;
       case '1':
-        switchSidebarTab('explorer');
+        switchSidebarTab('database');
         break;
       case '2':
+        switchSidebarTab('personal');
+        break;
+      case '3':
         switchSidebarTab('lines');
         break;
       case '?':

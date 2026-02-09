@@ -1412,27 +1412,6 @@ export function setEngineLinesVisible(visible: boolean): void {
   if (el) el.classList.toggle('hidden', !visible);
 }
 
-function renderSourceToggle(): string {
-  const mode = getExplorerMode();
-  return `<div class="explorer-source-toggle">
-    <div class="segment-picker">
-      <button class="segment-btn${mode === 'database' ? ' selected' : ''}" data-mode="database">Database</button>
-      <button class="segment-btn${mode === 'personal' ? ' selected' : ''}" data-mode="personal">My Games</button>
-    </div>
-  </div>`;
-}
-
-function wireSourceToggle(el: HTMLElement): void {
-  el.querySelectorAll('.explorer-source-toggle .segment-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = (btn as HTMLElement).dataset.mode as ExplorerMode;
-      if (mode === getExplorerMode()) return;
-      setExplorerMode(mode);
-      modeChangeCb?.();
-      updateExplorerPanel();
-    });
-  });
-}
 
 let personalFiltersOpen = false;
 let personalMatchBoard = true; // auto-filter color to match board orientation
@@ -2001,12 +1980,6 @@ export function updateExplorerPanel(): void {
   const el = document.getElementById('explorer-moves')!;
   el.innerHTML = '';
 
-  // Always render source toggle
-  const toggleDiv = document.createElement('div');
-  toggleDiv.innerHTML = renderSourceToggle();
-  while (toggleDiv.firstChild) el.append(toggleDiv.firstChild);
-  wireSourceToggle(el);
-
   const mode = getExplorerMode();
   const { fen } = getExplorerData();
 
@@ -2369,7 +2342,7 @@ async function doPersonalImport(): Promise<void> {
     resultEl.textContent = `Imported ${formatGames(total)} games from ${selectedPlatform === 'lichess' ? 'Lichess' : 'Chess.com'}.`;
     resultEl.className = 'pgn-result success';
 
-    updateExplorerPanel();
+    switchSidebarTab('personal');
     setTimeout(closePersonalImportModal, 1500);
   } catch (e: unknown) {
     progressFill.classList.remove('indeterminate');
@@ -2488,25 +2461,41 @@ function closeHelpModal(): void {
 
 // ── Sidebar Tabs ──
 
-let activeTab: 'explorer' | 'lines' = 'explorer';
+let activeTab: 'database' | 'personal' | 'lines' = 'database';
 
 export function initSidebarTabs(): void {
   const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const id = tab.dataset.tab as 'explorer' | 'lines';
+      const id = tab.dataset.tab as 'database' | 'personal' | 'lines';
       if (id === activeTab) return;
-      activeTab = id;
-
-      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
-      document.getElementById('tab-explorer')!.classList.toggle('hidden', id !== 'explorer');
-      document.getElementById('tab-lines')!.classList.toggle('hidden', id !== 'lines');
-
-      if (id === 'lines') {
-        tabChangeCallback?.();
-      }
+      applySidebarTab(id);
     });
   });
+}
+
+function applySidebarTab(id: 'database' | 'personal' | 'lines'): void {
+  activeTab = id;
+
+  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+
+  const isExplorer = id === 'database' || id === 'personal';
+  document.getElementById('tab-explorer')!.classList.toggle('hidden', !isExplorer);
+  document.getElementById('tab-lines')!.classList.toggle('hidden', id !== 'lines');
+
+  if (isExplorer) {
+    const mode = id === 'database' ? 'database' : 'personal';
+    if (getExplorerMode() !== mode) {
+      setExplorerMode(mode);
+      modeChangeCb?.();
+    }
+    updateExplorerPanel();
+  }
+
+  if (id === 'lines') {
+    tabChangeCallback?.();
+  }
 }
 
 let tabChangeCallback: (() => void) | null = null;
@@ -2515,22 +2504,13 @@ export function onTabChange(cb: () => void): void {
   tabChangeCallback = cb;
 }
 
-export function getActiveTab(): 'explorer' | 'lines' {
+export function getActiveTab(): 'database' | 'personal' | 'lines' {
   return activeTab;
 }
 
-export function switchSidebarTab(id: 'explorer' | 'lines'): void {
+export function switchSidebarTab(id: 'database' | 'personal' | 'lines'): void {
   if (id === activeTab) return;
-  activeTab = id;
-
-  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
-  document.getElementById('tab-explorer')!.classList.toggle('hidden', id !== 'explorer');
-  document.getElementById('tab-lines')!.classList.toggle('hidden', id !== 'lines');
-
-  if (id === 'lines') {
-    tabChangeCallback?.();
-  }
+  applySidebarTab(id);
 }
 
 export function toggleLockCurrentMove(): void {

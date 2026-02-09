@@ -1867,15 +1867,16 @@ input[type='range']::-moz-range-track {
 
 .sidebar-tab {
   flex: 1;
-  padding: 7px 12px;
+  padding: 7px 6px;
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   transition: all var(--transition-fast);
+  white-space: nowrap;
 }
 
 .sidebar-tab:not(:last-child) {
@@ -2654,22 +2655,6 @@ input[type='range']::-moz-range-track {
 }
 
 /* ── Personal Explorer ── */
-
-.explorer-source-toggle {
-  display: flex;
-  justify-content: center;
-  padding: 0 10px 8px;
-}
-
-.explorer-source-toggle .segment-picker {
-  width: 100%;
-}
-
-.explorer-source-toggle .segment-btn {
-  flex: 1;
-  padding: 5px 12px;
-  font-size: 11px;
-}
 
 .personal-info-bar {
   display: flex;

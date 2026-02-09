@@ -17,6 +17,7 @@ import {
 } from './board';
 import { queryExplorer } from './explorer';
 import { selectBotMove } from './bot';
+import { getExplorerMode, queryPersonalExplorer } from './personal-explorer';
 
 let phase: GamePhase = 'USER_TURN';
 let config: AppConfig;
@@ -156,14 +157,25 @@ async function onUserMove(_entry: MoveHistoryEntry): Promise<void> {
 async function doBotTurn(): Promise<void> {
   setPhase('BOT_THINKING');
 
-  const data = await fetchExplorerForFen(getFen());
+  const fen = getFen();
+  let data: ExplorerResponse | null = null;
+
+  if (getExplorerMode() === 'personal') {
+    data = queryPersonalExplorer(fen);
+  }
+  if (!data) {
+    data = await fetchExplorerForFen(fen);
+  } else {
+    // Still fetch database in background for explorer UI cache
+    fetchExplorerForFen(fen);
+  }
 
   if (!data || data.moves.length === 0) {
     setPhase('OUT_OF_BOOK');
     return;
   }
 
-  const selected = selectBotMove(data.moves, getFen(), config.topMoves, config.botWeighting === 'weighted', config.botMinPlayRatePct);
+  const selected = selectBotMove(data.moves, fen, config.topMoves, config.botWeighting === 'weighted', config.botMinPlayRatePct);
   if (!selected) {
     setPhase('OUT_OF_BOOK');
     return;
