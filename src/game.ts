@@ -221,6 +221,31 @@ export async function continueFromHere(): Promise<void> {
   }
 }
 
+export async function playAutoMove(): Promise<void> {
+  if (isViewingHistory() || isGameOver() || phase === 'BOT_THINKING') return;
+
+  const data = currentExplorerData ?? await fetchExplorerForFen(getFen());
+  if (!data || data.moves.length === 0) return;
+
+  const selected = selectBotMove(data.moves, getFen(), config.topMoves, config.botWeighting === 'weighted', config.botMinPlayRatePct);
+  if (!selected) return;
+
+  playBotMove(selected.uci);
+  onMoveUpdate?.();
+
+  if (isGameOver()) {
+    setPhase('GAME_OVER');
+    return;
+  }
+
+  if (shouldBotPlay()) {
+    await doBotTurn();
+  } else {
+    setPhase('USER_TURN');
+    await fetchExplorerForFen(getFen());
+  }
+}
+
 export function getExplorerCache(): Map<string, ExplorerResponse> {
   return explorerCache;
 }

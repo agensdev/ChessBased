@@ -422,6 +422,23 @@ cg-board square.selected {
   margin-right: 4px;
 }
 
+.help-shortcuts {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.help-shortcuts td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.help-shortcuts td:first-child {
+  white-space: nowrap;
+  width: 120px;
+  color: var(--text-secondary);
+}
+
 /* ── System Picker ── */
 #system-picker {
   display: flex;

@@ -7,10 +7,10 @@ import { loadConfig, saveConfig } from './config';
 import { loadRepertoire } from './repertoire';
 import {
   startGame, newGame, setListeners, updateConfig, getPhase,
-  getExplorerData, fetchExplorerForFen, playExplorerMove, continueFromHere,
+  getExplorerData, fetchExplorerForFen, playExplorerMove, continueFromHere, playAutoMove,
 } from './game';
 import {
-  flipBoard, navigateBack, navigateForward, onViewChange,
+  flipBoard, navigateBack, navigateForward, navigateTo, onViewChange,
   getMoveHistory, getViewIndex, isViewingHistory, showFen,
 } from './board';
 import {
@@ -28,6 +28,10 @@ import {
   getActiveTab,
   renderEngineLines,
   setEngineLinesVisible,
+  switchSidebarTab,
+  toggleLockCurrentMove,
+  isAnyModalOpen,
+  openHelpModal,
 } from './ui';
 import { renderTreePanel, refreshTree } from './tree-ui';
 import { initMobileTabs } from './mobile-tabs';
@@ -189,12 +193,73 @@ function boot(): void {
   );
 
   document.addEventListener('keydown', (e) => {
+    const tag = (e.target as HTMLElement).tagName;
+    const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+    // Arrow keys work even in modals (for opening library nav)
     if (e.key === 'ArrowLeft') {
+      if (isInput) return;
       e.preventDefault();
       navigateBack();
-    } else if (e.key === 'ArrowRight') {
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      if (isInput) return;
       e.preventDefault();
       navigateForward();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      if (isInput) return;
+      e.preventDefault();
+      navigateTo(0);
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      if (isInput) return;
+      e.preventDefault();
+      navigateTo(getMoveHistory().length);
+      return;
+    }
+
+    // All other hotkeys suppressed when typing or modal is open
+    if (isInput || isAnyModalOpen()) return;
+
+    switch (e.key) {
+      case 'n':
+        currentOpeningName = undefined;
+        newGame(config);
+        break;
+      case 'f':
+        flipBoard();
+        updateExplorerPanel();
+        break;
+      case 'l':
+        toggleLockCurrentMove();
+        break;
+      case 'e':
+        document.getElementById('eval-chip')?.click();
+        break;
+      case ' ':
+        e.preventDefault();
+        if (isViewingHistory()) {
+          continueFromHere();
+        } else if (getPhase() === 'OUT_OF_BOOK' || getPhase() === 'GAME_OVER') {
+          currentOpeningName = undefined;
+          newGame(config);
+        } else {
+          playAutoMove();
+        }
+        break;
+      case '1':
+        switchSidebarTab('explorer');
+        break;
+      case '2':
+        switchSidebarTab('lines');
+        break;
+      case '?':
+        openHelpModal();
+        break;
     }
   });
 

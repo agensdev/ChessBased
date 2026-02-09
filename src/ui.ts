@@ -716,6 +716,7 @@ function renderConfigPanel(): void {
   displayGrid.className = 'chip-grid';
 
   const evalChip = document.createElement('button');
+  evalChip.id = 'eval-chip';
   evalChip.className = `chip${currentConfig.showEval ? ' selected' : ''}`;
   evalChip.textContent = 'Eval bar';
   evalChip.setAttribute('data-tooltip', 'Stockfish evaluation bar next to the board');
@@ -2517,3 +2518,46 @@ export function onTabChange(cb: () => void): void {
 export function getActiveTab(): 'explorer' | 'lines' {
   return activeTab;
 }
+
+export function switchSidebarTab(id: 'explorer' | 'lines'): void {
+  if (id === activeTab) return;
+  activeTab = id;
+
+  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+  document.getElementById('tab-explorer')!.classList.toggle('hidden', id !== 'explorer');
+  document.getElementById('tab-lines')!.classList.toggle('hidden', id !== 'lines');
+
+  if (id === 'lines') {
+    tabChangeCallback?.();
+  }
+}
+
+export function toggleLockCurrentMove(): void {
+  const { data, fen } = getExplorerData();
+  if (!data || !fen || !nextMoveUci) return;
+
+  const move = data.moves.find(m => m.uci === nextMoveUci);
+  if (!move) return;
+
+  if (isMoveLocked(fen, nextMoveUci)) {
+    unlockMove(fen, nextMoveUci);
+  } else {
+    if (lockMove(fen, nextMoveUci)) {
+      renderSystemPicker();
+      openingChangeCb?.();
+    }
+  }
+  updateExplorerPanel();
+  updateMoveList();
+}
+
+export function isAnyModalOpen(): boolean {
+  const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal'];
+  return modalIds.some(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+}
+
+export { openHelpModal };
