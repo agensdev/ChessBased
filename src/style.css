@@ -398,6 +398,23 @@ cg-board square.selected {
   color: #8ab4e8;
 }
 
+.engine-star {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.engine-star-gold {
+  color: #d4a838;
+}
+
+.engine-star-silver {
+  color: #a0a4b8;
+}
+
+.engine-star-bronze {
+  color: #b07840;
+}
+
 /* ── Sidebars ── */
 #left-sidebar,
 #right-sidebar {

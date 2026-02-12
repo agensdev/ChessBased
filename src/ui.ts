@@ -1384,9 +1384,22 @@ function uciToSan(fen: string, uciMoves: string[], maxMoves = 6): string[] {
   return sans;
 }
 
+// Top engine move UCIs from latest engine lines: uci → rank (1-based)
+let engineTopMoves: Map<string, number> = new Map();
+
 export function renderEngineLines(lines: EngineLine[], fen: string): void {
   const el = document.getElementById('engine-lines');
   if (!el) return;
+
+  // Update top engine moves and refresh explorer highlights
+  const newMap = new Map<string, number>();
+  for (const l of lines) {
+    const uci = l.pv[0];
+    if (uci && !newMap.has(uci)) newMap.set(uci, l.rank);
+  }
+  const changed = newMap.size !== engineTopMoves.size || [...newMap].some(([u, r]) => engineTopMoves.get(u) !== r);
+  engineTopMoves = newMap;
+  if (changed) refreshEngineHighlights();
 
   if (lines.length === 0) {
     el.innerHTML = '';
@@ -1454,6 +1467,31 @@ export function renderEngineLines(lines: EngineLine[], fen: string): void {
 export function setEngineLinesVisible(visible: boolean): void {
   const el = document.getElementById('engine-lines');
   if (el) el.classList.toggle('hidden', !visible);
+  if (!visible) {
+    engineTopMoves.clear();
+    refreshEngineHighlights();
+  }
+}
+
+function engineStarHtml(rank: number): string {
+  const cls = rank === 1 ? 'engine-star-gold' : rank === 2 ? 'engine-star-silver' : 'engine-star-bronze';
+  return `<span class="engine-star ${cls}" data-tooltip="Engine #${rank}">&#9733;</span>`;
+}
+
+function refreshEngineHighlights(): void {
+  const rows = document.querySelectorAll('#explorer-moves .explorer-move[data-uci]');
+  rows.forEach((row) => {
+    const uci = (row as HTMLElement).dataset.uci;
+    if (!uci) return;
+    const badgeCol = row.querySelector('.explorer-badge-col');
+    if (!badgeCol) return;
+    // Remove existing engine star
+    badgeCol.querySelector('.engine-star')?.remove();
+    const rank = engineTopMoves.get(uci);
+    if (rank) {
+      badgeCol.insertAdjacentHTML('beforeend', engineStarHtml(rank));
+    }
+  });
 }
 
 
@@ -1943,10 +1981,12 @@ function renderMoveRows(
     const badgeTooltipMap: Record<string, string> = { best: 'Best move', blunder: 'Mistake', trap: 'Popular trap' };
     const badgeTooltipAttr = badge && badge !== 'book' && badgeTooltipMap[badge] ? ` data-tooltip="${badgeTooltipMap[badge]}"` : '';
     const badgeHtml = badge && badge !== 'book' ? `<span class="move-badge badge-${badge.replace('_', '-')}"${badgeTooltipAttr}>${badgeSymbol(badge)}</span>` : '';
+    const engineRank = engineTopMoves.get(move.uci);
+    const starHtml = engineRank ? engineStarHtml(engineRank) : '';
 
     html += `<div class="explorer-move${played}${lockedCls}" data-uci="${move.uci}">
       <span class="explorer-san">${move.san}</span>
-      <span class="explorer-badge-col">${badgeHtml}</span>
+      <span class="explorer-badge-col">${badgeHtml}${starHtml}</span>
       <span class="explorer-pct">${pct}%</span>
       <span class="explorer-games">${formatGames(total)}</span>
       <span class="explorer-bar">
