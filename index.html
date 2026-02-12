@@ -31,10 +31,23 @@
         </div>
         <div id="board"></div>
       </div>
-      <div id="controls"></div>
-      <div id="alert-banner"></div>
-      <div id="moves"></div>
-      <div id="move-actions"></div>
+      <div id="board-scroll">
+        <div id="controls"></div>
+        <div id="alert-banner"></div>
+        <div id="history-toolbar">
+          <div id="history-lines-toggle" class="segment-picker">
+            <button class="segment-btn selected" data-history-lines-view="history" type="button">History</button>
+            <button class="segment-btn" data-history-lines-view="lines" type="button">Lines</button>
+          </div>
+          <div id="move-actions"></div>
+        </div>
+        <div id="history-lines-body">
+          <div id="moves"></div>
+          <div id="opening-lines" class="hidden">
+            <div id="opening-lines-pgn"></div>
+          </div>
+        </div>
+      </div>
       <div id="mobile-tabs"></div>
       <div id="mobile-panel-moves" class="mobile-panel"></div>
       <div id="mobile-panel-explorer" class="mobile-panel"></div>
@@ -46,13 +59,9 @@
       <div id="sidebar-tabs">
         <button class="sidebar-tab active" data-tab="database">Database</button>
         <button class="sidebar-tab" data-tab="personal">My Games</button>
-        <button class="sidebar-tab" data-tab="lines">My Lines</button>
       </div>
       <div id="tab-explorer" class="tab-panel">
         <div id="explorer-moves"></div>
-      </div>
-      <div id="tab-lines" class="tab-panel hidden">
-        <div id="tree-panel"></div>
       </div>
     </div>
     <div id="pgn-modal-overlay" class="drawer-overlay hidden"></div>
@@ -119,7 +128,6 @@
           <tr><td><kbd>E</kbd></td><td>Toggle engine eval bar</td></tr>
           <tr><td><kbd>1</kbd></td><td>Database tab</td></tr>
           <tr><td><kbd>2</kbd></td><td>My Games tab</td></tr>
-          <tr><td><kbd>3</kbd></td><td>My Lines tab</td></tr>
           <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
         </table>
       </div>

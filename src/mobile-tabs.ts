@@ -11,8 +11,8 @@ const TAB_CONFIG: { id: TabId; label: string }[] = [
   { id: 'repertoire', label: 'Repertoire' },
 ];
 
-const MOVES_ELEMENTS = ['controls', 'alert-banner', 'moves', 'move-actions'];
-const EXPLORER_ELEMENTS = ['status', 'engine-lines', 'sidebar-tabs', 'tab-explorer', 'tab-lines'];
+const MOVES_ELEMENTS = ['controls', 'alert-banner', 'history-toolbar', 'moves', 'opening-lines'];
+const EXPLORER_ELEMENTS = ['status', 'engine-lines', 'sidebar-tabs', 'tab-explorer'];
 const REPERTOIRE_ELEMENTS = ['system-picker', 'config-inline'];
 
 let activeTab: TabId = 'explorer';

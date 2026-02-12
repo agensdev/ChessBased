@@ -299,6 +299,26 @@ export function resetBoard(playerColor: 'white' | 'black'): void {
   });
 }
 
+export function replayLine(line: MoveHistoryEntry[]): void {
+  if (!state) return;
+
+  const chess = Chess.default();
+  const history: MoveHistoryEntry[] = [];
+
+  for (const entry of line) {
+    const move = parseUci(entry.uci);
+    if (!move) break;
+    chess.play(move);
+    history.push({ san: entry.san, uci: entry.uci, fen: makeFen(chess.toSetup()) });
+  }
+
+  state.chess = chess;
+  state.moveHistory = history;
+  viewIndex = history.length;
+  syncBoard();
+  viewChangeCallback?.(viewIndex, history.length);
+}
+
 export function setOrientation(color: 'white' | 'black'): void {
   if (!state) return;
   state.cg.set({ orientation: color });

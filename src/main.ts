@@ -11,7 +11,7 @@ import {
 } from './game';
 import {
   flipBoard, navigateBack, navigateForward, navigateTo, onViewChange,
-  getMoveHistory, getViewIndex, isViewingHistory, showFen,
+  getMoveHistory, getViewIndex, isViewingHistory, showFen, replayLine,
 } from './board';
 import {
   initUI,
@@ -24,8 +24,6 @@ import {
   setNextMoveUci,
   setEvalWinPct,
   initSidebarTabs,
-  onTabChange,
-  getActiveTab,
   renderEngineLines,
   setEngineLinesVisible,
   switchSidebarTab,
@@ -33,11 +31,13 @@ import {
   isAnyModalOpen,
   openHelpModal,
 } from './ui';
-import { renderTreePanel, refreshTree } from './tree-ui';
+import { renderHistoryTree, refreshHistoryTree, setSelectedFen, type LineEntry } from './history-tree';
+import { setTreeNavigateCallback } from './tree-ui';
 import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
 import { initEngine, evaluate, winningChance, formatScore, setMultiPV } from './engine';
 import type { EvalScore, EngineLine } from './engine';
+
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -105,10 +105,8 @@ function refreshExplorerMode(): void {
 }
 
 function refreshTreeIfVisible(): void {
-  if (getActiveTab() === 'lines') {
-    const treePanel = document.getElementById('tree-panel');
-    if (treePanel) refreshTree(treePanel);
-  }
+  const pgnPanel = document.getElementById('opening-lines-pgn');
+  if (pgnPanel) refreshHistoryTree(pgnPanel);
 }
 
 function boot(): void {
@@ -257,9 +255,6 @@ function boot(): void {
       case '2':
         switchSidebarTab('personal');
         break;
-      case '3':
-        switchSidebarTab('lines');
-        break;
       case '?':
         openHelpModal();
         break;
@@ -275,18 +270,26 @@ function boot(): void {
     requestEval(fen);
   });
 
-  // Initialize sidebar tabs and tree panel
-  const treePanel = document.getElementById('tree-panel')!;
+  // Initialize sidebar tabs and tree panels
+  const pgnPanel = document.getElementById('opening-lines-pgn')!;
   initSidebarTabs();
-  renderTreePanel(treePanel, (fen: string) => {
-    showFen(fen);
+
+  const navigateToLine = (fen: string, line: LineEntry[]) => {
+    if (line.length > 0) {
+      replayLine(line);
+    } else {
+      showFen(fen);
+    }
+    setSelectedFen(fen);
     fetchExplorerForFen(fen);
     requestEval(fen);
-  });
-
-  onTabChange(() => {
-    refreshTree(treePanel);
-  });
+    updateMoveList();
+    updateExplorerPanel();
+    updateAlertBanner();
+    refreshTreeIfVisible();
+  };
+  renderHistoryTree(pgnPanel, navigateToLine);
+  setTreeNavigateCallback(navigateToLine);
 
   // Tooltip on eval bar (JS popup isn't clipped by overflow:hidden)
   const evalBar = document.getElementById('eval-bar')!;

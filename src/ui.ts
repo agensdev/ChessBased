@@ -64,6 +64,8 @@ let nextMoveUci: string | null = null;
 
 // Current engine eval as win% for the side to move (0-100), null if unavailable
 let currentEvalWinPct: number | null = null;
+type HistoryLinesView = 'history' | 'lines';
+let historyLinesView: HistoryLinesView = 'history';
 
 
 export function initUI(
@@ -89,11 +91,42 @@ export function initUI(
     // Re-render explorer panel once DB is loaded, in case user is already in personal mode
     if (getExplorerMode() === 'personal') updateExplorerPanel();
   });
+  initHistoryLinesToggle();
   renderSystemPicker();
   renderControls();
   renderConfigPanel();
   initHelpModal();
   initTooltips();
+}
+
+function setHistoryLinesView(view: HistoryLinesView): void {
+  historyLinesView = view;
+  const showHistory = view === 'history';
+
+  document.getElementById('moves')?.classList.toggle('hidden', !showHistory);
+  document.getElementById('move-actions')?.classList.toggle('hidden', !showHistory);
+  document.getElementById('opening-lines')?.classList.toggle('hidden', showHistory);
+
+  const buttons = document.querySelectorAll<HTMLButtonElement>('#history-lines-toggle .segment-btn');
+  buttons.forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.historyLinesView === view);
+  });
+}
+
+function initHistoryLinesToggle(): void {
+  const toggle = document.getElementById('history-lines-toggle');
+  if (!toggle) return;
+
+  const buttons = toggle.querySelectorAll<HTMLButtonElement>('.segment-btn');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.historyLinesView === 'lines' ? 'lines' : 'history';
+      if (view === historyLinesView) return;
+      setHistoryLinesView(view);
+    });
+  });
+
+  setHistoryLinesView(historyLinesView);
 }
 
 type PickerMode = 'normal' | 'rename' | 'confirm-delete' | 'merge-select' | 'merge-confirm';
@@ -221,16 +254,18 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   nameEl.textContent = active;
   card.append(nameEl);
 
-  // Actions: edit + delete (only when a custom opening is active)
+  let actionRow: HTMLDivElement | null = null;
+
+  // Actions: rename + merge + delete (shown in a row below the card for custom openings)
   if (isCustomActive) {
-    const actions = document.createElement('div');
-    actions.className = 'system-card-actions';
+    actionRow = document.createElement('div');
+    actionRow.className = 'system-card-action-row';
 
     const renameBtn = document.createElement('button');
-    renameBtn.className = 'system-icon-btn';
-    renameBtn.title = 'Rename';
+    renameBtn.className = 'system-inline-action-btn';
+    renameBtn.title = 'Rename opening';
     renameBtn.setAttribute('data-tooltip', 'Rename opening');
-    renameBtn.innerHTML = SVG_EDIT;
+    renameBtn.innerHTML = `${SVG_EDIT}<span>Rename</span>`;
     renameBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdownOpen = false;
@@ -239,36 +274,35 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     });
 
     const mergeBtn = document.createElement('button');
-    mergeBtn.className = 'system-icon-btn';
-    mergeBtn.title = 'Merge';
+    mergeBtn.className = 'system-inline-action-btn';
+    mergeBtn.title = 'Merge openings';
     mergeBtn.setAttribute('data-tooltip', 'Combine two openings into one');
-    mergeBtn.innerHTML = SVG_MERGE;
+    mergeBtn.innerHTML = `${SVG_MERGE}<span>Merge</span>`;
     const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
     if (customCount < 2) {
       mergeBtn.style.display = 'none';
-      }
-      mergeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        pickerMode = 'merge-select';
-        dropdownOpen = true;
-        renderSystemPicker();
-      });
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.className = 'system-icon-btn danger';
-      deleteBtn.title = 'Delete';
-      deleteBtn.setAttribute('data-tooltip', 'Delete opening');
-      deleteBtn.innerHTML = SVG_TRASH;
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdownOpen = false;
-        deleteTarget = active;
-        renderSystemPicker();
-      });
-
-      actions.append(renameBtn, mergeBtn, deleteBtn);
-      card.append(actions);
     }
+    mergeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pickerMode = 'merge-select';
+      dropdownOpen = true;
+      renderSystemPicker();
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'system-inline-action-btn danger';
+    deleteBtn.title = 'Delete opening';
+    deleteBtn.setAttribute('data-tooltip', 'Delete opening');
+    deleteBtn.innerHTML = `${SVG_TRASH}<span>Delete</span>`;
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdownOpen = false;
+      deleteTarget = active;
+      renderSystemPicker();
+    });
+
+    actionRow.append(renameBtn, mergeBtn, deleteBtn);
+  }
 
     // Dropdown chevron
     const chevron = document.createElement('div');
@@ -443,6 +477,9 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     }
 
     el.append(wrapper);
+    if (actionRow) {
+      el.append(actionRow);
+    }
 
   // Confirm-delete banner
   if (deleteTarget) {
@@ -1174,12 +1211,19 @@ export function updateMoveList(): void {
 
   // Render action buttons in separate container
   const actionsEl = document.getElementById('move-actions')!;
+  const upTo = isViewingHistory() ? vi : history.length;
+  const allLocked = upTo > 0 && history.slice(0, upTo).every((m, i) => {
+    const fen = i === 0 ? STARTING_FEN : history[i - 1].fen;
+    return isMoveLocked(fen, m.uci);
+  });
   let actionsHtml = '';
   if (isViewingHistory() && continueCb) {
     actionsHtml += '<button class="btn continue-btn">Continue from here</button>';
   }
-  actionsHtml += '<button class="btn lock-line-btn" data-tooltip="Lock all moves up to here">Add to opening</button>';
-  actionsHtml += '<button class="btn lock-line-new-btn" data-tooltip="Lock into a new opening">Add new opening</button>';
+  if (!allLocked) {
+    actionsHtml += '<button class="btn lock-line-btn" data-tooltip="Lock all moves up to here">Add to opening</button>';
+    actionsHtml += '<button class="btn lock-line-new-btn" data-tooltip="Lock into a new opening">Add new opening</button>';
+  }
   actionsEl.innerHTML = actionsHtml;
 
   const continueBtn = actionsEl.querySelector('.continue-btn');
@@ -1208,10 +1252,10 @@ export function updateMoveList(): void {
     updateMoveList();
   }
 
-  actionsEl.querySelector('.lock-line-btn')!
-    .addEventListener('click', () => lockLineToRepertoire(false));
-  actionsEl.querySelector('.lock-line-new-btn')!
-    .addEventListener('click', () => lockLineToRepertoire(true));
+  actionsEl.querySelector('.lock-line-btn')
+    ?.addEventListener('click', () => lockLineToRepertoire(false));
+  actionsEl.querySelector('.lock-line-new-btn')
+    ?.addEventListener('click', () => lockLineToRepertoire(true));
 
   el.scrollTop = el.scrollHeight;
 }
@@ -2032,6 +2076,21 @@ export function updateExplorerPanel(): void {
   const { data } = getExplorerData();
   const moves = data?.moves ?? [];
 
+  // Info bar (matches personal tab height)
+  const infoBar = document.createElement('div');
+  infoBar.className = 'database-info-bar';
+  const openingName = data?.opening?.name;
+  if (openingName) {
+    infoBar.innerHTML = `<span class="database-opening-name">${openingName}</span>`;
+  } else {
+    infoBar.innerHTML = `<span class="database-opening-name text-muted">Lichess database</span>`;
+  }
+  const totalGames = moves.reduce((sum, m) => sum + m.white + m.draws + m.black, 0);
+  if (totalGames > 0) {
+    infoBar.innerHTML += `<span class="database-game-count">${formatGames(totalGames)}</span>`;
+  }
+  el.append(infoBar);
+
   if (!showContent) {
     let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
     html += '<div class="explorer-list explorer-skeleton">';
@@ -2461,54 +2520,35 @@ function closeHelpModal(): void {
 
 // ── Sidebar Tabs ──
 
-let activeTab: 'database' | 'personal' | 'lines' = 'database';
+type SidebarTab = 'database' | 'personal';
+let activeTab: SidebarTab = 'database';
 
 export function initSidebarTabs(): void {
   const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const id = tab.dataset.tab as 'database' | 'personal' | 'lines';
+      const id = tab.dataset.tab as SidebarTab;
       if (id === activeTab) return;
       applySidebarTab(id);
     });
   });
 }
 
-function applySidebarTab(id: 'database' | 'personal' | 'lines'): void {
+function applySidebarTab(id: SidebarTab): void {
   activeTab = id;
 
   const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
 
-  const isExplorer = id === 'database' || id === 'personal';
-  document.getElementById('tab-explorer')!.classList.toggle('hidden', !isExplorer);
-  document.getElementById('tab-lines')!.classList.toggle('hidden', id !== 'lines');
-
-  if (isExplorer) {
-    const mode = id === 'database' ? 'database' : 'personal';
-    if (getExplorerMode() !== mode) {
-      setExplorerMode(mode);
-      modeChangeCb?.();
-    }
-    updateExplorerPanel();
+  const mode = id === 'database' ? 'database' : 'personal';
+  if (getExplorerMode() !== mode) {
+    setExplorerMode(mode);
+    modeChangeCb?.();
   }
-
-  if (id === 'lines') {
-    tabChangeCallback?.();
-  }
+  updateExplorerPanel();
 }
 
-let tabChangeCallback: (() => void) | null = null;
-
-export function onTabChange(cb: () => void): void {
-  tabChangeCallback = cb;
-}
-
-export function getActiveTab(): 'database' | 'personal' | 'lines' {
-  return activeTab;
-}
-
-export function switchSidebarTab(id: 'database' | 'personal' | 'lines'): void {
+export function switchSidebarTab(id: SidebarTab): void {
   if (id === activeTab) return;
   applySidebarTab(id);
 }
