@@ -24,6 +24,7 @@ let config: AppConfig;
 
 let currentExplorerData: ExplorerResponse | null = null;
 let currentExplorerFen: string = '';
+let autoMoveInProgress = false;
 
 // Cache explorer responses to avoid re-fetching when navigating
 const explorerCache = new Map<string, ExplorerResponse>();
@@ -96,6 +97,7 @@ export function newGame(appConfig: AppConfig): void {
   config = appConfig;
   currentExplorerData = null;
   currentExplorerFen = '';
+  autoMoveInProgress = false;
   explorerCache.clear();
 
   const boardColor = config.playerColor === 'both' ? 'white' : config.playerColor;
@@ -234,27 +236,38 @@ export async function continueFromHere(): Promise<void> {
 }
 
 export async function playAutoMove(): Promise<void> {
+  if (autoMoveInProgress) return;
   if (isViewingHistory() || isGameOver() || phase === 'BOT_THINKING') return;
 
-  const data = currentExplorerData ?? await fetchExplorerForFen(getFen());
-  if (!data || data.moves.length === 0) return;
+  autoMoveInProgress = true;
+  try {
+    // Only use cached data if it matches the current position
+    const fen = getFen();
+    const data = (currentExplorerFen === fen && currentExplorerData)
+      ? currentExplorerData
+      : await fetchExplorerForFen(fen);
+    if (!data || data.moves.length === 0) return;
 
-  const selected = selectBotMove(data.moves, getFen(), config.topMoves, config.botWeighting === 'weighted', config.botMinPlayRatePct);
-  if (!selected) return;
+    const selected = selectBotMove(data.moves, getFen(), config.topMoves, config.botWeighting === 'weighted', config.botMinPlayRatePct);
+    if (!selected) return;
 
-  playBotMove(selected.uci);
-  onMoveUpdate?.();
+    const entry = playBotMove(selected.uci);
+    if (!entry) return;
+    onMoveUpdate?.();
 
-  if (isGameOver()) {
-    setPhase('GAME_OVER');
-    return;
-  }
+    if (isGameOver()) {
+      setPhase('GAME_OVER');
+      return;
+    }
 
-  if (shouldBotPlay()) {
-    await doBotTurn();
-  } else {
-    setPhase('USER_TURN');
-    await fetchExplorerForFen(getFen());
+    if (shouldBotPlay()) {
+      await doBotTurn();
+    } else {
+      setPhase('USER_TURN');
+      await fetchExplorerForFen(getFen());
+    }
+  } finally {
+    autoMoveInProgress = false;
   }
 }
 

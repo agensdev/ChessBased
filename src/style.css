@@ -419,8 +419,8 @@ cg-board square.selected {
 #left-sidebar,
 #right-sidebar {
   flex: 1;
-  min-width: 260px;
-  max-width: 340px;
+  min-width: 300px;
+  max-width: 400px;
   min-height: 0;
   height: 100%;
   display: flex;
@@ -1174,7 +1174,7 @@ cg-board square.selected {
 /* ── Explorer Moves — fixed 10 rows ── */
 .explorer-header {
   display: grid;
-  grid-template-columns: 46px 22px 40px 36px 1fr 30px;
+  grid-template-columns: 46px 22px 64px 36px 1fr 30px;
   gap: 4px;
   padding: 0 10px 4px;
   font-size: 10px;
@@ -1192,7 +1192,7 @@ cg-board square.selected {
 
 .explorer-move {
   display: grid;
-  grid-template-columns: 46px 22px 40px 36px 1fr 30px;
+  grid-template-columns: 46px 22px 64px 36px 1fr 30px;
   align-items: center;
   gap: 4px;
   padding: 7px 10px;
@@ -1269,9 +1269,33 @@ cg-board square.selected {
 }
 
 .explorer-pct {
-  color: var(--text-primary);
+  position: relative;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.pct-fill {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: rgba(129, 178, 210, 0.25);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.pct-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 5px;
   font-family: var(--font-mono);
   font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .explorer-games {
@@ -1783,8 +1807,12 @@ input[type='range']::-moz-range-track {
 
 /* ── Move Badges (explorer) ── */
 .explorer-badge-col {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
   width: 22px;
+  min-height: 20px;
 }
 
 .move-badge {
@@ -1792,6 +1820,7 @@ input[type='range']::-moz-range-track {
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .badge-best {

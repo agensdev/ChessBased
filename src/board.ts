@@ -120,10 +120,11 @@ export function playBotMove(uci: string): MoveHistoryEntry | null {
   const move = parseUci(uci);
   if (!move) return null;
 
-  const san = makeSan(chess, move);
-  playMoveSound(san.includes('x'));
-
   if (!isNormal(move)) return null;
+
+  const san = makeSan(chess, move);
+  if (san === '--') return null;
+  playMoveSound(san.includes('x'));
 
   const orig = indexToSquareName(move.from) as Key;
   const dest = indexToSquareName(move.to) as Key;

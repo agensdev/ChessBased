@@ -858,7 +858,7 @@ function renderConfigPanel(): void {
     openDrawer();
   });
 
-  inlineEl.append(indicatorSection, alertSection, settingsBtn);
+  inlineEl.append(indicatorSection, settingsBtn);
 
   // Wire up drawer close handlers (once)
   initDrawer();
@@ -1321,45 +1321,8 @@ const alertLabels: Record<string, { text: string; cls: string }> = {
 };
 
 export function updateAlertBanner(): void {
-  const el = document.getElementById('alert-banner')!;
-
-  // Suppress alerts on the bot's turn (not relevant to the player)
-  if (currentConfig.playerColor !== 'both') {
-    const { fen } = getExplorerData();
-    const sideToMove = fen.split(' ')[1];
-    const isPlayerTurn =
-      (currentConfig.playerColor === 'white' && sideToMove === 'w') ||
-      (currentConfig.playerColor === 'black' && sideToMove === 'b');
-    if (!isPlayerTurn) {
-      el.innerHTML = '';
-      setAutoShapes([]);
-      return;
-    }
-  }
-
-  const result = currentAnalysis();
-  const alertType = result?.analysis.alert;
-  if (!alertType || !result.analysis.bestMoveUci || !currentConfig.enabledAlerts.includes(alertType)) {
-    el.innerHTML = '';
-    setAutoShapes([]);
-    return;
-  }
-
-  const info = alertLabels[alertType];
-  const bestUci = result.analysis.bestMoveUci;
-  el.innerHTML = `<div class="position-alert clickable ${info.cls}" data-tooltip="Click to show best move">${info.text}</div>`;
-
-  // Clear any previous arrow when alert changes
-  setAutoShapes([]);
-
-  el.querySelector('.position-alert')!.addEventListener('click', () => {
-    const orig = bestUci.slice(0, 2) as Key;
-    const dest = bestUci.slice(2, 4) as Key;
-    const brush = alertType === 'danger' ? 'red'
-      : alertType === 'opportunity' ? 'yellow'
-      : 'orange';
-    setAutoShapes([{ orig, dest, brush }]);
-  });
+  const el = document.getElementById('alert-banner');
+  if (el) el.innerHTML = '';
 }
 
 function uciToSan(fen: string, uciMoves: string[], maxMoves = 6): string[] {
@@ -1489,7 +1452,7 @@ function refreshEngineHighlights(): void {
     badgeCol.querySelector('.engine-star')?.remove();
     const rank = engineTopMoves.get(uci);
     if (rank) {
-      badgeCol.insertAdjacentHTML('beforeend', engineStarHtml(rank));
+      badgeCol.insertAdjacentHTML('afterbegin', engineStarHtml(rank));
     }
   });
 }
@@ -1963,12 +1926,19 @@ function renderMoveRows(
   const visibleMoves = moves.slice(0, EXPLORER_ROWS);
   const totalAllMoves = moves.reduce((sum, m) => sum + m.white + m.draws + m.black, 0);
 
-  let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+  const pctValues = visibleMoves.map(m => {
+    const t = m.white + m.draws + m.black;
+    return totalAllMoves > 0 ? (t / totalAllMoves) * 100 : 0;
+  });
+
+  let html = '<div class="explorer-header"><span>Move</span><span></span><span>Play rate</span><span>Games</span><span>Results</span><span></span></div>';
   html += '<div class="explorer-list">';
 
-  for (const move of visibleMoves) {
+  for (let i = 0; i < visibleMoves.length; i++) {
+    const move = visibleMoves[i];
     const total = move.white + move.draws + move.black;
-    const pct = totalAllMoves > 0 ? ((total / totalAllMoves) * 100).toFixed(1) : '0';
+    const pctNum = pctValues[i];
+    const pct = pctNum.toFixed(1);
     const locked = isMoveLocked(fen, move.uci);
     const played = nextMoveUci === move.uci ? ' played' : '';
     const lockedCls = locked ? ' locked' : '';
@@ -1986,8 +1956,8 @@ function renderMoveRows(
 
     html += `<div class="explorer-move${played}${lockedCls}" data-uci="${move.uci}">
       <span class="explorer-san">${move.san}</span>
-      <span class="explorer-badge-col">${badgeHtml}${starHtml}</span>
-      <span class="explorer-pct">${pct}%</span>
+      <span class="explorer-badge-col">${starHtml}${badgeHtml}</span>
+      <span class="explorer-pct"><span class="pct-fill" style="width:${pctNum}%"></span><span class="pct-label">${pct}%</span></span>
       <span class="explorer-games">${formatGames(total)}</span>
       <span class="explorer-bar">
         <span class="bar-white" style="width:${wPct}%">${wPct > 12 ? wPct + '%' : ''}</span>
