@@ -2453,6 +2453,7 @@ function initTooltips(): void {
       popup.textContent = content;
     }
     popup.classList.toggle('tooltip-wide', target.classList.contains('tooltip-wide') || isHtml);
+    popup.classList.toggle('tooltip-preline', target.classList.contains('tooltip-preline'));
 
     // Position off-screen to measure
     popup.style.left = '0';

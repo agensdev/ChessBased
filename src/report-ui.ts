@@ -415,34 +415,6 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     bar.append(group);
   }
 
-  // Current rating quick filter
-  if (reportCurrentRating != null) {
-    const group = el('div', 'report-filter-group');
-    const label = el('span', 'report-filter-label');
-    label.textContent = 'Relevance';
-    group.append(label);
-
-    const chip = el('button', 'chip chip-sm');
-    chip.textContent = `Near current (${reportCurrentRating} ±${CURRENT_RATING_WINDOW})`;
-    chip.setAttribute('data-tooltip', 'Prioritize games near your recent rating so old level performance has less influence.');
-    chip.classList.add('tooltip-wide');
-    if (isUsingCurrentRatingWindow(reportFilters)) chip.classList.add('selected');
-
-    chip.addEventListener('click', () => {
-      if (isUsingCurrentRatingWindow(reportFilters)) {
-        reportFilters.minRating = undefined;
-        reportFilters.maxRating = undefined;
-      } else {
-        reportFilters.minRating = reportCurrentRating! - CURRENT_RATING_WINDOW;
-        reportFilters.maxRating = reportCurrentRating! + CURRENT_RATING_WINDOW;
-      }
-      rerender();
-    });
-
-    group.append(chip);
-    bar.append(group);
-  }
-
   // Side filter (white/black/both)
   const hasWhiteGames = allGames.some(g => g.uw);
   const hasBlackGames = allGames.some(g => !g.uw);
@@ -504,7 +476,32 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     minInput.addEventListener('change', applyRating);
     maxInput.addEventListener('change', applyRating);
 
-    group.append(minInput, sep, maxInput);
+    const currentRating = reportCurrentRating;
+    if (currentRating != null) {
+      const relevantChip = el('button', 'chip chip-sm') as HTMLButtonElement;
+      relevantChip.textContent = 'Relevant';
+      relevantChip.setAttribute(
+        'data-tooltip',
+        `Relevant: filter rating range to your current level ±${CURRENT_RATING_WINDOW}.`,
+      );
+      relevantChip.classList.add('tooltip-wide');
+      if (isUsingCurrentRatingWindow(reportFilters)) relevantChip.classList.add('selected');
+
+      relevantChip.addEventListener('click', () => {
+        if (isUsingCurrentRatingWindow(reportFilters)) {
+          reportFilters.minRating = undefined;
+          reportFilters.maxRating = undefined;
+        } else {
+          reportFilters.minRating = currentRating - CURRENT_RATING_WINDOW;
+          reportFilters.maxRating = currentRating + CURRENT_RATING_WINDOW;
+        }
+        rerender();
+      });
+      group.append(minInput, sep, maxInput, relevantChip);
+    } else {
+      group.append(minInput, sep, maxInput);
+    }
+
     bar.append(group);
   }
 
@@ -574,17 +571,17 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
     renderWeaknessQueue(mainCol, report.weaknessQueue);
   }
 
+  // Positive lines
+  if (report.bestScoreOpenings.length > 0 || report.bestOpenings.length > 0) {
+    renderHighlights(mainCol, report.bestScoreOpenings, report.bestOpenings);
+  }
+
   // Opening tables
   if (report.whiteOpenings.length > 0) {
     renderOpeningTable(mainCol, 'White Openings', report.whiteOpenings);
   }
   if (report.blackOpenings.length > 0) {
     renderOpeningTable(mainCol, 'Black Openings', report.blackOpenings);
-  }
-
-  // Positive lines
-  if (report.bestOpenings.length > 0) {
-    renderHighlights(mainCol, report.bestOpenings);
   }
 
   // Board sidebar (sticky)
@@ -753,13 +750,13 @@ function renderReportGuide(parent: HTMLElement): void {
 
   const body = el('div', 'report-guide-body');
   body.innerHTML = `
-    <p><b>Goal:</b> find the openings that cost you the most points, then drill those first.</p>
+    <p><b>Goal:</b> find the openings that cost you the most points, then train those first.</p>
     <ol>
       <li>Start with <b>Priority Weaknesses</b> and sort by <b>Priority</b>.</li>
       <li>Use <b>Preview</b> to inspect the line and continuations.</li>
       <li>Use <b>Open in trainer</b> from board preview to continue training from that line.</li>
-      <li>Check <b>Vs Elo</b> to see if results are above/below Elo expectation.</li>
-      <li>Use confidence badges (<b>H/M/L</b>) to judge sample reliability.</li>
+      <li>Use <b>Win%</b> and <b>~Elo Δ</b> for quick performance read.</li>
+      <li>Use tooltip basis details (gap, games, CI) to judge reliability.</li>
     </ol>
   `;
   const actions = el('div', 'report-guide-actions');
@@ -798,6 +795,46 @@ function renderTheoryModal(parent: HTMLElement): void {
       Raw win rates can be misleading, so these metrics try to combine results, reliability, opponent strength, and frequency.
     </p>
 
+    <h3>Metrics you see</h3>
+    <p>
+      <b>Win%</b>: simple wins / games.
+    </p>
+    <p>
+      <b>~Elo Δ</b>: simple estimate based on decisive games only:
+      <b>(wins − losses) × 8</b>. Draws count as 0.
+    </p>
+
+    <h3>Priority</h3>
+    <p>
+      Priority is a training-priority metric, not a win-rate metric.
+      It combines how weak a line is and how often it appears.
+      Current implementation is:
+      <b>priority = max(0, overallScore − adjustedLineScore) × games</b>.
+    </p>
+    <p>
+      Meaning:
+      a line that is slightly weak but very frequent can be higher priority than a very weak line you almost never reach.
+    </p>
+    <p>
+      In practice: <b>sort by Priority first</b> when deciding what to train.
+    </p>
+    <p>
+      Quick read:
+      <b>0</b> = not a training priority,
+      <b>3+</b> = worth training,
+      <b>7+</b> = high priority,
+      <b>10+</b> = severe leak.
+      So yes, <b>10</b> is generally very high.
+    </p>
+
+    <h3>Hidden metrics used for Priority</h3>
+    <p>
+      Behind the scenes, Priority also relies on non-displayed fields:
+      raw score, adjusted score, confidence interval (±), rating-adjusted gap (Vs Elo), and line frequency.
+      That is why a line with 31% win rate can still land around Priority 7: draws count as half points,
+      the line is compared to your overall baseline, and values are stability-adjusted.
+    </p>
+
     <h3>Core score percentages</h3>
     <p>
       A line score is based on chess points, not just wins:
@@ -819,21 +856,6 @@ function renderTheoryModal(parent: HTMLElement): void {
       In practice: treat Score% as your best estimate of true line strength right now.
     </p>
 
-    <h3>Confidence (H/M/L)</h3>
-    <p>
-      Confidence is about <b>uncertainty</b>, not how good the line is.
-      It is derived from sample size and score spread (shown as ± points).
-    </p>
-    <ul>
-      <li><b>H</b> (high): larger sample, metric is more stable.</li>
-      <li><b>M</b> (medium): useful signal, still some noise.</li>
-      <li><b>L</b> (low): treat as tentative; gather more games.</li>
-    </ul>
-    <p>
-      A weak line with low confidence is a hypothesis.
-      A weak line with high confidence is usually a real problem.
-    </p>
-
     <h3>Elo expected score and Vs Elo</h3>
     <p>
       Elo gives an expected score against each opponent based on rating difference:
@@ -852,19 +874,15 @@ function renderTheoryModal(parent: HTMLElement): void {
       This is important because 50% score can be either good or bad depending on opponent strength.
     </p>
 
-    <h3>Priority</h3>
+    <h3>Confidence and uncertainty</h3>
     <p>
-      Priority is a training-priority metric, not a win-rate metric.
-      It combines how weak a line is and how often it appears.
-      Current implementation is:
-      <b>priority = max(0, overallScore − adjustedLineScore) × games</b>.
+      Reliability is about <b>uncertainty</b>, not how good the line is.
+      Smaller samples and wider confidence intervals mean noisier estimates.
+      Use the tooltip basis values (games and CI ±) when judging how much to trust a score.
     </p>
     <p>
-      Meaning:
-      a line that is slightly weak but very frequent can be higher priority than a very weak line you almost never reach.
-    </p>
-    <p>
-      In practice: <b>sort by Priority first</b> when deciding what to drill.
+      A weak line with low sample support is a hypothesis.
+      A weak line with stronger sample support is usually a real problem.
     </p>
 
     <h3>How to use this in training</h3>
@@ -872,7 +890,7 @@ function renderTheoryModal(parent: HTMLElement): void {
       <li>Pick top 1-3 lines by Priority.</li>
       <li>Use Preview to inspect the branch and opponent continuations.</li>
       <li>Use Open in trainer from board preview to train from that line.</li>
-      <li>After new games, re-check if Priority and Vs Elo improved.</li>
+      <li>After new games, re-check if Priority drops and Win% improves.</li>
     </ol>
 
     <h3>Limits</h3>
@@ -1144,11 +1162,7 @@ function renderOpeningTable(parent: HTMLElement, title: string, lines: OpeningLi
         sub.title = line.label;
         labelText.append(sub);
       }
-      const conf = el('span', `report-confidence ${line.confidence}`);
-      conf.textContent = line.confidence.charAt(0).toUpperCase();
-      conf.setAttribute('data-tooltip', confidenceTooltip(line));
-      conf.classList.add('tooltip-wide');
-      labelCell.append(labelText, conf);
+      labelCell.append(labelText);
 
       const games = el('span', 'report-opening-games');
       games.textContent = formatNum(line.wdl.total);
@@ -1174,8 +1188,9 @@ function renderOpeningTable(parent: HTMLElement, title: string, lines: OpeningLi
       if (line.impact >= 2) impact.classList.add('bad');
       impact.setAttribute('data-tooltip', impactTooltip(line));
       impact.classList.add('tooltip-wide');
+      impact.classList.add('tooltip-preline');
 
-      row.append(labelCell, games, win, delta, impact);
+      row.append(labelCell, impact, win, delta, games);
       table.append(row);
     }
   }
@@ -1203,15 +1218,16 @@ function renderOpeningTable(parent: HTMLElement, title: string, lines: OpeningLi
   hRate.setAttribute('data-tooltip', 'Raw win percentage: wins / total games in this line.');
   hRate.addEventListener('click', () => handleSort('winRate'));
   const hDelta = el('span', 'report-opening-delta sortable');
-  hDelta.textContent = '~Elo Δ';
+  hDelta.textContent = '~EloΔ';
   hDelta.setAttribute('data-tooltip', 'Simple estimate: (wins - losses) * 8. Draws count as 0.');
   hDelta.addEventListener('click', () => handleSort('delta'));
   const hImpact = el('span', 'report-opening-impact sortable');
   hImpact.textContent = 'Priority';
-  hImpact.setAttribute('data-tooltip', 'Training priority: combines line weakness and line frequency.');
+  hImpact.setAttribute('data-tooltip', priorityScaleTooltip());
   hImpact.classList.add('tooltip-wide');
+  hImpact.classList.add('tooltip-preline');
   hImpact.addEventListener('click', () => handleSort('impact'));
-  headerRow.append(hLabel, hGames, hRate, hDelta, hImpact);
+  headerRow.append(hLabel, hImpact, hRate, hDelta, hGames);
 
   function updateHeaderIndicators(): void {
     hGames.classList.toggle('sort-active', sortKey === 'games');
@@ -1266,24 +1282,29 @@ function renderWeaknessQueue(parent: HTMLElement, lines: OpeningLine[]): void {
 
     const stats = el('div', 'report-weakness-stats');
     const adjChip = document.createElement('span');
-    adjChip.className = 'chip-adj';
     adjChip.textContent = `Win ${line.winRate}%`;
+    if (line.winRate >= 55) adjChip.classList.add('chip-good');
+    else if (line.winRate <= 45) adjChip.classList.add('chip-bad');
     adjChip.setAttribute('data-tooltip', winRateTooltip(line));
     adjChip.classList.add('tooltip-wide');
 
     const expChip = document.createElement('span');
-    expChip.className = 'chip-exp';
-    expChip.textContent = `~Elo Δ ${formatSignedNum(eloSwingForLine(line))}`;
+    const elo = eloSwingForLine(line);
+    expChip.textContent = `~Elo Δ${formatSignedNum(elo)}`;
+    if (elo > 0) expChip.classList.add('chip-good');
+    else if (elo < 0) expChip.classList.add('chip-bad');
     expChip.setAttribute('data-tooltip', eloSwingTooltip(line));
     expChip.classList.add('tooltip-wide');
 
     const impactChip = document.createElement('span');
-    impactChip.className = 'chip-impact';
     impactChip.textContent = `Priority ${formatImpact(line.impact)}`;
+    if (line.impact >= 3) impactChip.classList.add('chip-bad');
+    else if (line.impact >= 1.5) impactChip.classList.add('chip-warn');
     impactChip.setAttribute('data-tooltip', impactTooltip(line));
     impactChip.classList.add('tooltip-wide');
+    impactChip.classList.add('tooltip-preline');
 
-    stats.append(adjChip, expChip, impactChip);
+    stats.append(impactChip, adjChip, expChip);
     top.append(stats);
 
     card.append(top);
@@ -1296,50 +1317,77 @@ function renderWeaknessQueue(parent: HTMLElement, lines: OpeningLine[]): void {
 
 // ── Highlights ──
 
-function renderHighlights(parent: HTMLElement, lines: OpeningLine[]): void {
+function renderHighlights(
+  parent: HTMLElement,
+  scoreLines: OpeningLine[],
+  weightedLines: OpeningLine[],
+): void {
   const section = el('div', 'report-findings-section');
   const heading = el('div', 'report-section-title');
-  heading.textContent = 'Highlights (What Works)';
+  heading.textContent = 'Best Performers';
   section.append(heading);
+
+  appendHighlightSlot(section, 'Top Score%', scoreLines);
+  appendHighlightSlot(section, 'Proven Winners (Score x Games)', weightedLines);
+
+  parent.append(section);
+}
+
+function appendHighlightSlot(section: HTMLElement, title: string, lines: OpeningLine[]): void {
+  if (lines.length === 0) return;
+
+  const slot = el('div', 'report-highlights-slot');
+  const slotTitle = el('div', 'report-highlights-slot-title');
+  slotTitle.textContent = title;
+  slot.append(slotTitle);
 
   const list = el('div', 'report-highlights-list');
   for (const line of lines) {
-    const card = el('div', 'report-highlight-card');
-    card.classList.add(line.color === 'white' ? 'side-white' : 'side-black');
-    card.addEventListener('click', () => selectLine(line));
-    const titleRow = el('div', 'report-line-title-row');
-    const label = el('div', 'report-highlight-label');
-    label.textContent = line.displayLabel;
-    label.title = line.openingName ? `${line.displayLabel}\n${line.label}` : line.label;
-    const gamesBadge = el('span', 'report-line-games-badge');
-    gamesBadge.textContent = `${formatNum(line.wdl.total)} games`;
-    gamesBadge.setAttribute('data-tooltip', 'Number of games in this line after filters.');
-    titleRow.append(label, gamesBadge);
-    if (line.openingName && line.label) {
-      const sub = el('div', 'report-highlight-subline');
-      sub.textContent = line.label;
-      sub.title = line.label;
-      card.append(titleRow, sub);
-    } else {
-      card.append(titleRow);
-    }
-
-    const stats = el('div', 'report-highlight-stats');
-    const adj = document.createElement('span');
-    adj.textContent = `Win ${line.winRate}%`;
-    adj.setAttribute('data-tooltip', winRateTooltip(line));
-    adj.classList.add('tooltip-wide');
-    const exp = document.createElement('span');
-    exp.textContent = `~Elo Δ ${formatSignedNum(eloSwingForLine(line))}`;
-    exp.setAttribute('data-tooltip', eloSwingTooltip(line));
-    exp.classList.add('tooltip-wide');
-    stats.append(adj, exp);
-
-    card.append(stats);
-    list.append(card);
+    list.append(buildHighlightCard(line));
   }
-  section.append(list);
-  parent.append(section);
+  slot.append(list);
+  section.append(slot);
+}
+
+function buildHighlightCard(line: OpeningLine): HTMLElement {
+  const card = el('div', 'report-highlight-card');
+  card.classList.add(line.color === 'white' ? 'side-white' : 'side-black');
+  card.addEventListener('click', () => selectLine(line));
+  const titleRow = el('div', 'report-line-title-row');
+  const label = el('div', 'report-highlight-label');
+  label.textContent = line.displayLabel;
+  label.title = line.openingName ? `${line.displayLabel}\n${line.label}` : line.label;
+  const gamesBadge = el('span', 'report-line-games-badge');
+  gamesBadge.textContent = `${formatNum(line.wdl.total)} games`;
+  gamesBadge.setAttribute('data-tooltip', 'Number of games in this line after filters.');
+  titleRow.append(label, gamesBadge);
+  if (line.openingName && line.label) {
+    const sub = el('div', 'report-highlight-subline');
+    sub.textContent = line.label;
+    sub.title = line.label;
+    card.append(titleRow, sub);
+  } else {
+    card.append(titleRow);
+  }
+
+  const stats = el('div', 'report-highlight-stats');
+  const adj = document.createElement('span');
+  adj.textContent = `Win ${line.winRate}%`;
+  if (line.winRate >= 55) adj.classList.add('chip-good');
+  else if (line.winRate <= 45) adj.classList.add('chip-bad');
+  adj.setAttribute('data-tooltip', winRateTooltip(line));
+  adj.classList.add('tooltip-wide');
+  const exp = document.createElement('span');
+  const hElo = eloSwingForLine(line);
+  exp.textContent = `~Elo Δ${formatSignedNum(hElo)}`;
+  if (hElo > 0) exp.classList.add('chip-good');
+  else if (hElo < 0) exp.classList.add('chip-bad');
+  exp.setAttribute('data-tooltip', eloSwingTooltip(line));
+  exp.classList.add('tooltip-wide');
+  stats.append(adj, exp);
+
+  card.append(stats);
+  return card;
 }
 
 // ── Board Preview & Line Navigation ──
@@ -1698,6 +1746,15 @@ function formatImpact(n: number): string {
   return n.toFixed(2).replace(/\.00$/, '');
 }
 
+function priorityScaleTooltip(): string {
+  return [
+    'Priority = training urgency for this line.',
+    '0-2: Low, mostly fine.',
+    '3-6: Rating leak, practice soon.',
+    '7+: Major leak, prioritize fixing.',
+  ].join('\n');
+}
+
 function gamesTooltip(line: OpeningLine): string {
   return `Record in this line: ${line.wdl.wins}W ${line.wdl.draws}D ${line.wdl.losses}L `
     + `(${line.wdl.total} games).`;
@@ -1729,16 +1786,18 @@ function eloSwingTooltip(line: OpeningLine): string {
 }
 
 function impactTooltip(line: OpeningLine): string {
-  return `Priority is a calculated urgency score using: `
-    + `score shortfall vs your baseline, line frequency (games), and sample-size stabilization. `
-    + `Current value: ${formatImpact(line.impact)} (higher = more training value).`;
-}
-
-function confidenceTooltip(line: OpeningLine): string {
-  const n = line.wdl.total;
-  if (n <= 0) return 'Confidence: no samples yet.';
-  return `${capitalize(line.confidence)} confidence from ${n} games. `
-    + `Expected swing is about +/-${line.scoreCiPct} points.`;
+  const vsElo = line.deltaVsExpectedPct == null
+    ? 'n/a'
+    : `${line.deltaVsExpectedPct > 0 ? '+' : ''}${line.deltaVsExpectedPct}%`;
+  const gapPts = line.wdl.total > 0 ? (line.impact / line.wdl.total) * 100 : 0;
+  return [
+    'Priority shows how urgently this line should be practiced.',
+    '0-2: Low, mostly fine.',
+    '3-6: Rating leak, practice soon.',
+    '7+: Major leak, prioritize fixing.',
+    `Basis: gap ${gapPts.toFixed(1)} pts x ${line.wdl.total} games.`,
+    `Adjusted ${line.adjustedScorePct}% | Raw ${line.rawScorePct}% | Vs Elo ${vsElo} | CI +/-${line.scoreCiPct}.`,
+  ].join('\n');
 }
 
 function winRatePct(wdl: WDL): number {

@@ -5,6 +5,7 @@ import { Chess } from 'chessops/chess';
 import { makeFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
 import { makeSan } from 'chessops/san';
+import { findOpeningByFen } from './opening-index';
 
 // ── Types ──
 
@@ -17,12 +18,27 @@ export interface WDL {
 
 export interface OpeningLine {
   label: string;
+  displayLabel: string;
   moves: string[];   // SAN
-  ucis: string[];     // UCI
+  ucis: string[];    // UCI
   wdl: WDL;
   winRate: number;
   endFen: string;
   color: 'white' | 'black';
+  openingName: string | null;
+  eco: string | null;
+  rawScorePct: number;
+  adjustedScorePct: number;
+  scoreCiPct: number;
+  confidence: 'high' | 'medium' | 'low';
+  deltaVsExpectedPct: number | null;
+  impact: number;
+  exampleLinks: {
+    wins: string[];
+    losses: string[];
+    draws: string[];
+    all: string[];
+  };
 }
 
 export interface MonthlyRating {
@@ -47,6 +63,8 @@ export interface ReportData {
   ratingTrend: MonthlyRating[];
   whiteOpenings: OpeningLine[];
   blackOpenings: OpeningLine[];
+  weaknessQueue: OpeningLine[];
+  bestScoreOpenings: OpeningLine[];
   bestOpenings: OpeningLine[];
   worstOpenings: OpeningLine[];
 }
@@ -75,6 +93,15 @@ function winRate(wdl: WDL): number {
   return Math.round((wdl.wins / wdl.total) * 100);
 }
 
+function scoreRate(wdl: WDL): number {
+  if (wdl.total === 0) return 0;
+  return (wdl.wins + wdl.draws * 0.5) / wdl.total;
+}
+
+function scorePct(wdl: WDL): number {
+  return Math.round(scoreRate(wdl) * 100);
+}
+
 function positionKey(fen: string): string {
   return fen.split(' ').slice(0, 4).join(' ');
 }
@@ -82,10 +109,13 @@ function positionKey(fen: string): string {
 // ── Opening Tree Walk ──
 
 type QueryFn = (fen: string) => ExplorerResponse | null;
+type MoveGameIndicesFn = (fen: string, uci: string) => number[];
+type GameByIndexFn = (idx: number) => GameMeta | undefined;
 
 const MIN_GAMES_FOR_LINE = 5;
 const MIN_DEPTH = 2;  // at least 1 move per side
 const MAX_DEPTH = 8;  // 4 moves per side
+const PRIOR_WEIGHT = 12;
 
 function walkOpenings(
   isWhite: boolean,
@@ -198,14 +228,29 @@ function walkOpenings(
       }
     }
 
+    const openingInfo = findOpeningForLine(endFen, ucis);
+    const displayLabel = openingInfo
+      ? openingInfo.name
+      : label;
+
     lines.push({
       label,
+      displayLabel,
       moves,
       ucis,
       wdl,
       winRate: winRate(wdl),
       endFen,
       color: isWhite ? 'white' : 'black',
+      openingName: openingInfo?.name ?? null,
+      eco: openingInfo?.eco ?? null,
+      rawScorePct: scorePct(wdl),
+      adjustedScorePct: scorePct(wdl),
+      scoreCiPct: 0,
+      confidence: 'low',
+      deltaVsExpectedPct: null,
+      impact: 0,
+      exampleLinks: { wins: [], losses: [], draws: [], all: [] },
     });
   }
 
@@ -217,12 +262,181 @@ function walkOpenings(
   return lines;
 }
 
+function findOpeningForLine(endFen: string, ucis: string[]): { name: string; eco: string } | null {
+  // Prefer the deepest known opening name reached along the line.
+  const chess = Chess.default();
+  let best: { name: string; eco: string } | null = null;
+
+  for (const uci of ucis) {
+    const move = parseUci(uci);
+    if (!move) break;
+    chess.play(move);
+    const hit = findOpeningByFen(makeFen(chess.toSetup()));
+    if (hit) best = hit;
+  }
+
+  if (best) return best;
+  const endHit = findOpeningByFen(endFen);
+  return endHit ? { name: endHit.name, eco: endHit.eco } : null;
+}
+
+function confidenceFromGames(total: number): 'high' | 'medium' | 'low' {
+  if (total >= 40) return 'high';
+  if (total >= 15) return 'medium';
+  return 'low';
+}
+
+function expectedScore(userRating: number, oppRating: number): number | null {
+  if (userRating <= 0 || oppRating <= 0) return null;
+  return 1 / (1 + Math.pow(10, (oppRating - userRating) / 400));
+}
+
+function getParentFenAndLastUci(ucis: string[]): { fen: string; uci: string } | null {
+  if (ucis.length === 0) return null;
+  const chess = Chess.default();
+  for (let i = 0; i < ucis.length - 1; i++) {
+    const move = parseUci(ucis[i]);
+    if (!move) return null;
+    chess.play(move);
+  }
+  return {
+    fen: makeFen(chess.toSetup()),
+    uci: ucis[ucis.length - 1],
+  };
+}
+
+function buildLineExamples(
+  indices: number[],
+  getGameByIndex: GameByIndexFn,
+): { wins: string[]; losses: string[]; draws: string[]; all: string[] } {
+  const rows: { href: string; result: 'win' | 'draw' | 'loss'; month: string; idx: number }[] = [];
+
+  for (const idx of indices) {
+    const g = getGameByIndex(idx);
+    if (!g?.gl) continue;
+    rows.push({
+      href: g.gl,
+      result: userResult(g),
+      month: g.mo ?? '',
+      idx,
+    });
+  }
+
+  // Most recent first (month desc, then index desc as stable fallback)
+  rows.sort((a, b) => {
+    const am = a.month && a.month !== 'unknown' ? a.month : '';
+    const bm = b.month && b.month !== 'unknown' ? b.month : '';
+    if (am !== bm) return bm.localeCompare(am);
+    return b.idx - a.idx;
+  });
+
+  const all = rows.map(r => r.href);
+  const wins = rows.filter(r => r.result === 'win').map(r => r.href);
+  const losses = rows.filter(r => r.result === 'loss').map(r => r.href);
+  const draws = rows.filter(r => r.result === 'draw').map(r => r.href);
+
+  return { wins, losses, draws, all };
+}
+
+function adjustedScore(raw: number, total: number, globalScore: number): number {
+  return total > 0
+    ? ((raw * total) + (globalScore * PRIOR_WEIGHT)) / (total + PRIOR_WEIGHT)
+    : globalScore;
+}
+
+function lineKey(line: OpeningLine): string {
+  return `${line.color}|${line.label}`;
+}
+
+function pickTopLines(
+  sorted: OpeningLine[],
+  count: number,
+  avoid: Set<string> = new Set(),
+): OpeningLine[] {
+  const out: OpeningLine[] = [];
+  const used = new Set<string>();
+
+  for (const line of sorted) {
+    const key = lineKey(line);
+    if (avoid.has(key) || used.has(key)) continue;
+    out.push(line);
+    used.add(key);
+    if (out.length >= count) break;
+  }
+
+  // Backfill in case avoid-filter removed too many.
+  if (out.length < count) {
+    for (const line of sorted) {
+      const key = lineKey(line);
+      if (used.has(key)) continue;
+      out.push(line);
+      used.add(key);
+      if (out.length >= count) break;
+    }
+  }
+
+  return out;
+}
+
+function thirdStickout(
+  sorted: OpeningLine[],
+  valueOf: (line: OpeningLine) => number,
+): number {
+  if (sorted.length < 3) return Number.NEGATIVE_INFINITY;
+  if (sorted.length === 3) return Number.POSITIVE_INFINITY;
+  return valueOf(sorted[2]) - valueOf(sorted[3]);
+}
+
+function enrichOpeningLines(
+  lines: OpeningLine[],
+  globalScore: number,
+  moveGameIndicesFn?: MoveGameIndicesFn,
+  gameByIndexFn?: GameByIndexFn,
+): void {
+  for (const line of lines) {
+    const total = line.wdl.total;
+    const raw = scoreRate(line.wdl);
+    const adj = adjustedScore(raw, total, globalScore);
+    const ci = total > 0 ? 1.96 * Math.sqrt((adj * (1 - adj)) / total) : 0;
+
+    line.rawScorePct = Math.round(raw * 100);
+    line.adjustedScorePct = Math.round(adj * 100);
+    line.scoreCiPct = Math.round(ci * 1000) / 10;
+    line.confidence = confidenceFromGames(total);
+    line.impact = Math.round(Math.max(0, globalScore - adj) * total * 100) / 100;
+
+    if (!moveGameIndicesFn || !gameByIndexFn || line.ucis.length === 0) continue;
+    const parent = getParentFenAndLastUci(line.ucis);
+    if (!parent) continue;
+    const indices = moveGameIndicesFn(parent.fen, parent.uci);
+    if (indices.length === 0) continue;
+
+    const expected: number[] = [];
+    for (const idx of indices) {
+      const g = gameByIndexFn(idx);
+      if (!g) continue;
+      const e = expectedScore(g.ur, g.or);
+      if (e == null) continue;
+      expected.push(e);
+    }
+    if (expected.length > 0) {
+      const expectedAvg = expected.reduce((a, b) => a + b, 0) / expected.length;
+      line.deltaVsExpectedPct = Math.round((raw - expectedAvg) * 100);
+    }
+
+    line.exampleLinks = buildLineExamples(indices, gameByIndexFn);
+  }
+}
+
 // ── Main Report Generation ──
 
 export function generateReport(
   games: readonly GameMeta[],
   queryFn: QueryFn,
   syncColorFilter?: (color: 'white' | 'black' | null) => void,
+  moveGameIndicesFn?: MoveGameIndicesFn,
+  gameByIndexFn?: GameByIndexFn,
+  sideFilter?: 'white' | 'black',
 ): ReportData {
   const overall = emptyWDL();
   const asWhite = emptyWDL();
@@ -281,24 +495,96 @@ export function generateReport(
   ratingTrend.sort((a, b) => a.month.localeCompare(b.month));
 
   // Opening trees — filter by color so we only see games where the user played that side
-  syncColorFilter?.('white');
-  const whiteOpenings = walkOpenings(true, queryFn);
-  syncColorFilter?.('black');
-  const blackOpenings = walkOpenings(false, queryFn);
+  const globalScore = scoreRate(overall);
+  let whiteOpenings: OpeningLine[] = [];
+  let blackOpenings: OpeningLine[] = [];
+
+  if (sideFilter !== 'black') {
+    syncColorFilter?.('white');
+    whiteOpenings = walkOpenings(true, queryFn);
+    enrichOpeningLines(whiteOpenings, globalScore, moveGameIndicesFn, gameByIndexFn);
+  }
+
+  if (sideFilter !== 'white') {
+    syncColorFilter?.('black');
+    blackOpenings = walkOpenings(false, queryFn);
+    enrichOpeningLines(blackOpenings, globalScore, moveGameIndicesFn, gameByIndexFn);
+  }
+
   syncColorFilter?.(null);
 
-  // Key findings: lines with >= 10 games, top/bottom 3 by win rate
+  // Key findings: lines with >= 10 games, best by adjusted score, weak by impact
   const MIN_GAMES_FOR_FINDING = 10;
   const allLines = [
     ...whiteOpenings.filter(l => l.wdl.total >= MIN_GAMES_FOR_FINDING),
     ...blackOpenings.filter(l => l.wdl.total >= MIN_GAMES_FOR_FINDING),
   ];
 
-  const sorted = [...allLines].sort((a, b) => b.winRate - a.winRate);
-  const bestOpenings = sorted.slice(0, 3);
-  const worstOpenings = sorted.length > 3
-    ? sorted.slice(-3).reverse()
-    : [];
+  // Positive training value for "what works":
+  // How far above baseline this line is, scaled by how often it occurs.
+  const highlightStrength = (line: OpeningLine): number => {
+    const raw = scoreRate(line.wdl);
+    const adj = adjustedScore(raw, line.wdl.total, globalScore);
+    return Math.max(0, adj - globalScore) * line.wdl.total;
+  };
+
+  const scoreSorted = [...allLines]
+    .sort((a, b) =>
+      b.adjustedScorePct - a.adjustedScorePct ||
+      b.rawScorePct - a.rawScorePct ||
+      b.wdl.total - a.wdl.total
+    );
+
+  const weightedSorted = [...allLines]
+    .sort((a, b) =>
+      highlightStrength(b) - highlightStrength(a) ||
+      b.adjustedScorePct - a.adjustedScorePct ||
+      b.rawScorePct - a.rawScorePct ||
+      b.wdl.total - a.wdl.total
+    );
+
+  const scoreStickout = thirdStickout(scoreSorted, l => l.adjustedScorePct);
+  const weightedStickout = thirdStickout(weightedSorted, l => highlightStrength(l));
+
+  const scoreTarget = weightedStickout > scoreStickout ? 2 : 3;
+  const weightedTarget = weightedStickout > scoreStickout ? 3 : 2;
+
+  let bestScoreOpenings: OpeningLine[];
+  let bestOpenings: OpeningLine[];
+
+  if (scoreTarget >= weightedTarget) {
+    bestScoreOpenings = pickTopLines(scoreSorted, scoreTarget);
+    bestOpenings = pickTopLines(
+      weightedSorted,
+      weightedTarget,
+      new Set(bestScoreOpenings.map(lineKey)),
+    );
+  } else {
+    bestOpenings = pickTopLines(weightedSorted, weightedTarget);
+    bestScoreOpenings = pickTopLines(
+      scoreSorted,
+      scoreTarget,
+      new Set(bestOpenings.map(lineKey)),
+    );
+  }
+
+  const worstOpenings = [...allLines]
+    .filter(l => l.impact > 0)
+    .sort((a, b) =>
+      b.impact - a.impact ||
+      a.adjustedScorePct - b.adjustedScorePct ||
+      b.wdl.total - a.wdl.total
+    )
+    .slice(0, 3);
+
+  const weaknessQueue = [...whiteOpenings, ...blackOpenings]
+    .filter(l => l.wdl.total >= 8 && l.impact > 0)
+    .sort((a, b) =>
+      b.impact - a.impact ||
+      a.adjustedScorePct - b.adjustedScorePct ||
+      b.wdl.total - a.wdl.total
+    )
+    .slice(0, 5);
 
   return {
     totalGames: games.length,
@@ -310,6 +596,8 @@ export function generateReport(
     ratingTrend,
     whiteOpenings,
     blackOpenings,
+    weaknessQueue,
+    bestScoreOpenings,
     bestOpenings,
     worstOpenings,
   };

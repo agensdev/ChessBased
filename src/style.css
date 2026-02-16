@@ -2117,6 +2117,10 @@ input[type='range']::-moz-range-track {
   width: 240px;
 }
 
+.tooltip-popup.tooltip-preline {
+  white-space: pre-line;
+}
+
 .tooltip-popup b {
   color: var(--text-primary);
   font-weight: 600;
@@ -4670,7 +4674,7 @@ input[type='range']::-moz-range-track {
 
 .report-opening-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 54px 54px 64px 64px;
+  grid-template-columns: minmax(0, 1fr) 64px 54px 64px 54px;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -4689,8 +4693,6 @@ input[type='range']::-moz-range-track {
   background: var(--accent-subtle);
 }
 
-.report-opening-row.side-white::after,
-.report-opening-row.side-black::after,
 .report-weakness-card.side-white::after,
 .report-weakness-card.side-black::after,
 .report-highlight-card.side-white::after,
@@ -4704,13 +4706,11 @@ input[type='range']::-moz-range-track {
   pointer-events: none;
 }
 
-.report-opening-row.side-white::after,
 .report-weakness-card.side-white::after,
 .report-highlight-card.side-white::after {
   background: linear-gradient(180deg, rgba(245, 248, 255, 0.95), rgba(218, 228, 248, 0.78));
 }
 
-.report-opening-row.side-black::after,
 .report-weakness-card.side-black::after,
 .report-highlight-card.side-black::after {
   background: linear-gradient(180deg, rgba(58, 64, 74, 0.95), rgba(34, 39, 47, 0.9));
@@ -4754,10 +4754,7 @@ input[type='range']::-moz-range-track {
 }
 
 .report-opening-label-cell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+  display: block;
   min-width: 0;
 }
 
@@ -4775,36 +4772,6 @@ input[type='range']::-moz-range-track {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.report-confidence {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  font-size: 10px;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.report-confidence.high {
-  color: var(--opportunity);
-  border-color: rgba(92, 184, 92, 0.45);
-}
-
-.report-confidence.medium {
-  color: var(--accent);
-  border-color: rgba(91, 127, 199, 0.45);
-}
-
-.report-confidence.low {
-  color: var(--danger);
-  border-color: rgba(196, 91, 91, 0.45);
 }
 
 .report-opening-games {
@@ -4874,17 +4841,14 @@ input[type='range']::-moz-range-track {
 
 .report-weakness-card.severity-high {
   border-left-color: #d76666;
-  background: linear-gradient(180deg, rgba(215, 102, 102, 0.14), rgba(215, 102, 102, 0.04));
 }
 
 .report-weakness-card.severity-mid {
   border-left-color: #d6924a;
-  background: linear-gradient(180deg, rgba(214, 146, 74, 0.14), rgba(214, 146, 74, 0.04));
 }
 
 .report-weakness-card.severity-low {
   border-left-color: #8d9ec8;
-  background: linear-gradient(180deg, rgba(141, 158, 200, 0.13), rgba(141, 158, 200, 0.04));
 }
 
 .report-weakness-top {
@@ -4938,26 +4902,26 @@ input[type='range']::-moz-range-track {
 
 .report-weakness-stats span {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-family: var(--font-mono);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   padding: 2px 7px;
 }
 
-.report-weakness-stats .chip-adj {
+.report-weakness-stats .chip-good {
   color: #a7d8a7;
-  border-color: rgba(120, 204, 120, 0.36);
+  border-color: rgba(120, 204, 120, 0.32);
 }
 
-.report-weakness-stats .chip-exp {
-  color: #9fbbe9;
-  border-color: rgba(123, 163, 221, 0.36);
+.report-weakness-stats .chip-bad {
+  color: #e8a5a5;
+  border-color: rgba(215, 102, 102, 0.32);
 }
 
-.report-weakness-stats .chip-impact {
-  color: #efb6b6;
-  border-color: rgba(215, 102, 102, 0.42);
+.report-weakness-stats .chip-warn {
+  color: #e0c08a;
+  border-color: rgba(214, 176, 74, 0.32);
 }
 
 .report-weakness-examples {
@@ -4996,13 +4960,30 @@ input[type='range']::-moz-range-track {
   gap: 10px;
 }
 
+.report-highlights-slot {
+  margin-bottom: 14px;
+}
+
+.report-highlights-slot:last-child {
+  margin-bottom: 0;
+}
+
+.report-highlights-slot-title {
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .report-highlight-card {
-  border: 1px solid rgba(122, 194, 124, 0.34);
+  border: 1px solid var(--border);
   border-left-width: 3px;
   border-left-color: #76b97a;
   border-radius: var(--radius-sm);
   padding: 10px;
-  background: linear-gradient(180deg, rgba(112, 189, 115, 0.16), rgba(112, 189, 115, 0.05));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.01));
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -5026,7 +5007,7 @@ input[type='range']::-moz-range-track {
 .report-highlight-subline {
   margin-top: 2px;
   font-size: 11px;
-  color: #b7d7b7;
+  color: var(--text-muted);
   font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
@@ -5042,12 +5023,16 @@ input[type='range']::-moz-range-track {
 
 .report-highlight-stats span {
   font-size: 11px;
-  color: #cfe8cf;
+  color: var(--text-muted);
   font-family: var(--font-mono);
-  border: 1px solid rgba(143, 219, 145, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   padding: 2px 7px;
-  background: rgba(0, 0, 0, 0.14);
+}
+
+.report-highlight-stats .chip-good {
+  color: #a7d8a7;
+  border-color: rgba(120, 204, 120, 0.32);
 }
 
 .report-highlight-examples {
@@ -5124,7 +5109,7 @@ input[type='range']::-moz-range-track {
   }
 
   .report-opening-row {
-    grid-template-columns: minmax(0, 1fr) 42px 42px 52px 56px;
+    grid-template-columns: minmax(0, 1fr) 56px 42px 52px 42px;
     font-size: 12px;
   }
 }
