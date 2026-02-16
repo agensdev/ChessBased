@@ -38,6 +38,7 @@ import {
   getFilteredGameCount,
   type ExplorerMode, type Platform, type LichessFilters,
 } from './personal-explorer';
+import { openReportPage, isReportPageOpen } from './report-ui';
 
 type ContinueCallback = () => void;
 type OpeningChangeCallback = () => void;
@@ -1247,9 +1248,9 @@ export function updateMoveList(): void {
     if (repertoireCreated && !forceNew) {
       renderSystemPicker();
     }
-    openingChangeCb?.();
     updateExplorerPanel();
     updateMoveList();
+    updateAlertBanner();
   }
 
   actionsEl.querySelector('.lock-line-btn')
@@ -1491,7 +1492,7 @@ function renderPersonalInfoBar(el: HTMLElement): void {
   bar.append(filterBtn);
 
   const refreshBtn = document.createElement('button');
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
   refreshBtn.setAttribute('data-tooltip', 'Import new games');
   refreshBtn.addEventListener('click', () => openPersonalImportModal());
   bar.append(refreshBtn);
@@ -1976,7 +1977,14 @@ function renderMoveRows(
   }
 
   for (let i = visibleMoves.length; i < EXPLORER_ROWS; i++) {
-    html += '<div class="explorer-move empty-row">&nbsp;</div>';
+    html += `<div class="explorer-move empty-row">
+      <span class="skeleton-bar" style="width:24px"></span>
+      <span></span>
+      <span class="skeleton-bar" style="width:32px"></span>
+      <span class="skeleton-bar" style="width:20px"></span>
+      <span class="skeleton-bar" style="width:100%"></span>
+      <span></span>
+    </div>`;
   }
 
   html += '</div>';
@@ -2542,6 +2550,8 @@ export function initSidebarTabs(): void {
       applySidebarTab(id);
     });
   });
+
+  document.getElementById('report-btn')?.addEventListener('click', () => openReportPage());
 }
 
 function applySidebarTab(id: SidebarTab): void {
@@ -2549,6 +2559,8 @@ function applySidebarTab(id: SidebarTab): void {
 
   const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+
+  document.getElementById('report-btn')?.classList.toggle('hidden', id !== 'personal');
 
   const mode = id === 'database' ? 'database' : 'personal';
   if (getExplorerMode() !== mode) {
@@ -2583,6 +2595,7 @@ export function toggleLockCurrentMove(): void {
 }
 
 export function isAnyModalOpen(): boolean {
+  if (isReportPageOpen()) return true;
   const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal'];
   return modalIds.some(id => {
     const el = document.getElementById(id);

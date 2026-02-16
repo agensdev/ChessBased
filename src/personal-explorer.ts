@@ -12,6 +12,12 @@ import type { ExplorerMove, ExplorerResponse } from './types';
 export type ExplorerMode = 'database' | 'personal';
 export type Platform = 'lichess' | 'chesscom';
 
+const TC_ORDER: Record<string, number> = { bullet: 0, blitz: 1, rapid: 2, classical: 3, daily: 4 };
+
+export function sortTimeClasses(tcs: string[]): string[] {
+  return tcs.sort((a, b) => (TC_ORDER[a] ?? 99) - (TC_ORDER[b] ?? 99));
+}
+
 interface PersonalConfig {
   platform: Platform;
   username: string;
@@ -21,13 +27,15 @@ interface PersonalConfig {
 }
 
 /** Compact per-game metadata. Short keys to reduce JSON size. */
-interface GameMeta {
+export interface GameMeta {
   tc: string;   // time class: bullet/blitz/rapid/classical/daily
   ur: number;   // user's rating
   or: number;   // opponent rating
   mo: string;   // month: YYYY-MM
   re: 'w' | 'd' | 'b'; // game result (white won / draw / black won)
   uw: boolean;  // user was white
+  gl?: string;  // game link (URL)
+  op?: string;  // opponent name
 }
 
 /** Full database stored in IndexedDB */
@@ -35,6 +43,7 @@ interface PersonalDBV2 {
   v: 2;
   games: GameMeta[];
   positions: Record<string, Record<string, number[]>>; // posKey → uci → gameIndices
+  fingerprints?: string[];  // game fingerprints for dedup (parallel to games[])
 }
 
 export interface PersonalFilters {
@@ -190,6 +199,10 @@ export function isDBReady(): boolean {
   return dbReady;
 }
 
+export function getPersonalGames(): readonly GameMeta[] | null {
+  return personalDB?.games ?? null;
+}
+
 export async function clearPersonalData(): Promise<void> {
   localStorage.removeItem(CONFIG_KEY);
   try { localStorage.removeItem(LEGACY_GAMES_KEY); } catch { /* ignore */ }
@@ -261,7 +274,7 @@ export function getPersonalStats(): { timeClasses: string[]; minRating: number; 
     if (g.ur > maxR) maxR = g.ur;
   }
   return {
-    timeClasses: [...tcSet].sort(),
+    timeClasses: sortTimeClasses([...tcSet]),
     minRating: minR,
     maxRating: maxR,
     months: [...monthSet].sort(),
@@ -376,10 +389,23 @@ function parseRating(headers: Map<string, string>, isWhite: boolean): number {
   return val ? parseInt(val) || 0 : 0;
 }
 
+function gameFingerprint(headers: Map<string, string>): string {
+  // Chess.com: Link header is unique game URL; Lichess: Site header
+  const link = headers.get('Link') ?? headers.get('Site') ?? '';
+  if (link.includes('/game/') || link.includes('lichess.org/')) return link;
+  // Fallback: composite key
+  const w = headers.get('White') ?? '';
+  const b = headers.get('Black') ?? '';
+  const d = headers.get('UTCDate') ?? headers.get('Date') ?? '';
+  const t = headers.get('UTCTime') ?? headers.get('StartTime') ?? '';
+  return `${w}|${b}|${d}|${t}`;
+}
+
 export function processGamesIntoDB(
   pgnText: string,
   username: string,
   db: PersonalDBV2,
+  knownGames?: Set<string>,
 ): number {
   const games = parsePgn(pgnText);
   let processed = 0;
@@ -387,6 +413,13 @@ export function processGamesIntoDB(
   for (const game of games) {
     const result = parseResult(game.headers.get('Result'));
     if (!result) continue;
+
+    // Dedup: skip games already in the database
+    const fp = gameFingerprint(game.headers);
+    if (knownGames) {
+      if (knownGames.has(fp)) continue;
+      knownGames.add(fp);
+    }
 
     const whitePlayer = game.headers.get('White') ?? '';
     const blackPlayer = game.headers.get('Black') ?? '';
@@ -396,6 +429,9 @@ export function processGamesIntoDB(
 
     const tc = detectTimeClass(game.headers);
 
+    const gameLink = game.headers.get('Link') ?? game.headers.get('Site') ?? '';
+    const opponent = userIsWhite ? blackPlayer : whitePlayer;
+
     const meta: GameMeta = {
       tc,
       ur: parseRating(game.headers, userIsWhite),
@@ -403,10 +439,14 @@ export function processGamesIntoDB(
       mo: parseMonth(game.headers),
       re: result,
       uw: userIsWhite,
+      gl: gameLink || undefined,
+      op: opponent || undefined,
     };
 
     const gameIdx = db.games.length;
     db.games.push(meta);
+    if (!db.fingerprints) db.fingerprints = [];
+    db.fingerprints.push(fp);
 
     const posResult = startingPosition(game.headers);
     if (!posResult.isOk) continue;
@@ -437,7 +477,7 @@ export function processGamesIntoDB(
 }
 
 function emptyDB(): PersonalDBV2 {
-  return { v: 2, games: [], positions: {} };
+  return { v: 2, games: [], positions: {}, fingerprints: [] };
 }
 
 // ── Lichess Import ──
@@ -527,9 +567,15 @@ export async function importFromChesscom(
   const lastArchive = isSameUser ? existingConfig?.lastCompletedArchive : undefined;
 
   // Incremental: reuse existing DB and skip completed archives
-  const isIncremental = isSameUser && existingConfig != null;
-  const db = isIncremental && personalDB ? personalDB : (isIncremental ? (await loadDBFromIDB() ?? emptyDB()) : emptyDB());
+  // Force fresh import if DB lacks fingerprints (pre-dedup migration)
+  const existingDB = isSameUser ? (personalDB ?? await loadDBFromIDB()) : null;
+  const hasFingerprints = existingDB?.fingerprints && existingDB.fingerprints.length > 0;
+  const isIncremental = isSameUser && existingConfig != null && hasFingerprints;
+  const db = isIncremental && existingDB ? existingDB : emptyDB();
   let totalGames = isIncremental ? (existingConfig?.gameCount ?? 0) : 0;
+
+  // Build dedup set from existing fingerprints
+  const knownGames = new Set<string>(db.fingerprints ?? []);
 
   onProgress('Fetching game archives...', totalGames);
   const archResp = await fetch(
@@ -564,7 +610,7 @@ export async function importFromChesscom(
       const pgnResp = await fetch(`${archives[i]}/pgn`, { signal });
       if (!pgnResp.ok) continue;
       const pgnText = await pgnResp.text();
-      const count = processGamesIntoDB(pgnText, username, db);
+      const count = processGamesIntoDB(pgnText, username, db, knownGames);
       totalGames += count;
     } catch (e) {
       if (signal?.aborted) throw new Error('Import cancelled');
@@ -588,10 +634,10 @@ export async function importFromChesscom(
     platform: 'chesscom',
     username,
     lastImportTimestamp: Date.now(),
-    gameCount: totalGames,
+    gameCount: db.games.length,
     lastCompletedArchive: completedArchive,
   };
   saveConfig(personalConfig);
 
-  return totalGames;
+  return db.games.length;
 }

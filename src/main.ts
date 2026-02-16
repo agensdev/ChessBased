@@ -11,7 +11,7 @@ import {
 } from './game';
 import {
   flipBoard, navigateBack, navigateForward, navigateTo, onViewChange,
-  getMoveHistory, getViewIndex, isViewingHistory, showFen, replayLine,
+  getMoveHistory, getViewIndex, isViewingHistory, showFen, replayLine, setOrientation,
 } from './board';
 import {
   initUI,
@@ -33,6 +33,8 @@ import {
 } from './ui';
 import { renderHistoryTree, refreshHistoryTree, setSelectedFen, type LineEntry } from './history-tree';
 import { setTreeNavigateCallback } from './tree-ui';
+import { closeReportPage, setReportNavigateCallback } from './report-ui';
+import { setPersonalFilters } from './personal-explorer';
 import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
 import { initEngine, evaluate, winningChance, formatScore, setMultiPV } from './engine';
@@ -290,6 +292,21 @@ function boot(): void {
   };
   renderHistoryTree(pgnPanel, navigateToLine);
   setTreeNavigateCallback(navigateToLine);
+
+  // Report → trainer navigation
+  setReportNavigateCallback((moves, fen, orientation, filters) => {
+    closeReportPage();
+    setPersonalFilters(filters);
+    setOrientation(orientation);
+    replayLine(moves);
+    switchSidebarTab('personal');
+    fetchExplorerForFen(fen);
+    requestEval(fen);
+    updateMoveList();
+    updateExplorerPanel();
+    updateAlertBanner();
+    refreshTreeIfVisible();
+  });
 
   // Tooltip on eval bar (JS popup isn't clipped by overflow:hidden)
   const evalBar = document.getElementById('eval-bar')!;

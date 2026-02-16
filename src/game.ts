@@ -287,10 +287,11 @@ export function updateConfig(newConfig: AppConfig): void {
     fetchExplorerForFen(getFen());
   }
 
-  // Update board orientation if mode changed
+  // Update board orientation if mode changed (manual mode keeps current orientation)
   if (newConfig.playerColor !== oldColor) {
-    const boardColor = newConfig.playerColor === 'both' ? 'white' : newConfig.playerColor;
-    setOrientation(boardColor);
+    if (newConfig.playerColor !== 'both') {
+      setOrientation(newConfig.playerColor);
+    }
 
     // If the bot should now play in the current position, trigger it
     if (!isViewingHistory() && !isGameOver() && shouldBotPlay() && phase !== 'BOT_THINKING') {
