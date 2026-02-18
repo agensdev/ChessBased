@@ -18,12 +18,28 @@ export function sortTimeClasses(tcs: string[]): string[] {
   return tcs.sort((a, b) => (TC_ORDER[a] ?? 99) - (TC_ORDER[b] ?? 99));
 }
 
-interface PersonalConfig {
+export interface ChesscomModeStats {
+  currentRating: number | null;
+  currentDate: number | null;
+  bestRating: number | null;
+  bestDate: number | null;
+  wins: number;
+  losses: number;
+  draws: number;
+}
+
+export interface ChesscomStatsSnapshot {
+  fetchedAt: number;
+  timeClassRatings: Partial<Record<'bullet' | 'blitz' | 'rapid' | 'daily' | 'classical', ChesscomModeStats>>;
+}
+
+export interface PersonalConfig {
   platform: Platform;
   username: string;
   lastImportTimestamp: number;
   gameCount: number;
   lastCompletedArchive?: string;
+  chesscomStats?: ChesscomStatsSnapshot;
 }
 
 /** Compact per-game metadata. Short keys to reduce JSON size. */
@@ -32,8 +48,10 @@ export interface GameMeta {
   ur: number;   // user's rating
   or: number;   // opponent rating
   mo: string;   // month: YYYY-MM
+  da?: string;  // date: YYYY-MM-DD
   re: 'w' | 'd' | 'b'; // game result (white won / draw / black won)
   uw: boolean;  // user was white
+  ec?: string;  // ECO code (e.g. C33)
   gl?: string;  // game link (URL)
   op?: string;  // opponent name
 }
@@ -50,6 +68,8 @@ export interface PersonalFilters {
   timeClasses?: string[];   // e.g. ['blitz', 'rapid']
   minRating?: number;
   maxRating?: number;
+  sinceDate?: string;       // YYYY-MM-DD
+  untilDate?: string;       // YYYY-MM-DD
   sinceMonth?: string;      // YYYY-MM
   untilMonth?: string;      // YYYY-MM
   color?: 'white' | 'black'; // only games where user played this color
@@ -231,6 +251,8 @@ function recomputeFilteredSet(): void {
     (activeFilters.timeClasses && activeFilters.timeClasses.length > 0) ||
     activeFilters.minRating != null ||
     activeFilters.maxRating != null ||
+    activeFilters.sinceDate ||
+    activeFilters.untilDate ||
     activeFilters.sinceMonth ||
     activeFilters.untilMonth ||
     activeFilters.color;
@@ -254,6 +276,9 @@ function gameMatchesFilters(g: GameMeta): boolean {
   }
   if (activeFilters.minRating != null && g.ur < activeFilters.minRating) return false;
   if (activeFilters.maxRating != null && g.ur > activeFilters.maxRating) return false;
+  const dateKey = gameDateKey(g);
+  if (activeFilters.sinceDate && (!dateKey || dateKey < activeFilters.sinceDate)) return false;
+  if (activeFilters.untilDate && (!dateKey || dateKey > activeFilters.untilDate)) return false;
   if (activeFilters.sinceMonth && g.mo < activeFilters.sinceMonth) return false;
   if (activeFilters.untilMonth && g.mo > activeFilters.untilMonth) return false;
   if (activeFilters.color === 'white' && !g.uw) return false;
@@ -262,22 +287,38 @@ function gameMatchesFilters(g: GameMeta): boolean {
 }
 
 /** Get available time classes and rating range from imported data */
-export function getPersonalStats(): { timeClasses: string[]; minRating: number; maxRating: number; months: string[] } | null {
+export function getPersonalStats(): {
+  timeClasses: string[];
+  minRating: number;
+  maxRating: number;
+  months: string[];
+  minDate: string | null;
+  maxDate: string | null;
+} | null {
   if (!personalDB || personalDB.games.length === 0) return null;
   const tcSet = new Set<string>();
   const monthSet = new Set<string>();
   let minR = Infinity, maxR = -Infinity;
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
   for (const g of personalDB.games) {
     tcSet.add(g.tc);
     monthSet.add(g.mo);
     if (g.ur < minR) minR = g.ur;
     if (g.ur > maxR) maxR = g.ur;
+    const dateKey = gameDateKey(g);
+    if (dateKey) {
+      if (!minDate || dateKey < minDate) minDate = dateKey;
+      if (!maxDate || dateKey > maxDate) maxDate = dateKey;
+    }
   }
   return {
     timeClasses: sortTimeClasses([...tcSet]),
     minRating: minR,
     maxRating: maxR,
     months: [...monthSet].sort(),
+    minDate,
+    maxDate,
   };
 }
 
@@ -345,7 +386,10 @@ export function queryPersonalExplorer(fen: string): ExplorerResponse | null {
  * Return filtered game indices for a specific move at a position.
  * Indices refer to personalDB.games.
  */
-export function queryPersonalMoveGameIndices(fen: string, uci: string): number[] {
+export function queryPersonalMoveGameIndices(
+  fen: string,
+  uci: string,
+): number[] {
   if (!personalDB) return [];
   const key = positionKey(fen);
   const indices = personalDB.positions[key]?.[uci];
@@ -393,12 +437,37 @@ function detectTimeClass(headers: Map<string, string>): string {
   return 'classical';
 }
 
-function parseMonth(headers: Map<string, string>): string {
-  const date = headers.get('UTCDate') ?? headers.get('Date') ?? '';
-  // Format: "2026.01.26" → "2026-01"
-  const parts = date.split('.');
-  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
-  return 'unknown';
+function parseDateParts(headers: Map<string, string>): { month: string; date?: string } {
+  const raw = (headers.get('UTCDate') ?? headers.get('Date') ?? '').trim();
+  if (!raw) return { month: 'unknown' };
+
+  const parts = raw.split(/[./-]/);
+  if (parts.length < 2) return { month: 'unknown' };
+  const year = parts[0];
+  const monthRaw = parts[1];
+  const dayRaw = parts[2];
+  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(monthRaw)) return { month: 'unknown' };
+
+  const monthNum = parseInt(monthRaw, 10);
+  if (!Number.isFinite(monthNum) || monthNum < 1 || monthNum > 12) return { month: 'unknown' };
+  const month = `${year}-${String(monthNum).padStart(2, '0')}`;
+
+  if (!dayRaw || !/^\d{1,2}$/.test(dayRaw)) return { month };
+  const dayNum = parseInt(dayRaw, 10);
+  if (!Number.isFinite(dayNum) || dayNum < 1 || dayNum > 31) return { month };
+  return { month, date: `${month}-${String(dayNum).padStart(2, '0')}` };
+}
+
+function parseEco(headers: Map<string, string>): string | undefined {
+  const eco = (headers.get('ECO') ?? '').trim().toUpperCase();
+  if (!eco) return undefined;
+  return eco;
+}
+
+function gameDateKey(g: GameMeta): string | null {
+  if (g.da && g.da !== 'unknown') return g.da;
+  if (g.mo && g.mo !== 'unknown') return `${g.mo}-01`;
+  return null;
 }
 
 function parseRating(headers: Map<string, string>, isWhite: boolean): number {
@@ -450,13 +519,16 @@ export function processGamesIntoDB(
     const gameLink = game.headers.get('Link') ?? game.headers.get('Site') ?? '';
     const opponent = userIsWhite ? blackPlayer : whitePlayer;
 
+    const dateParts = parseDateParts(game.headers);
     const meta: GameMeta = {
       tc,
       ur: parseRating(game.headers, userIsWhite),
       or: parseRating(game.headers, !userIsWhite),
-      mo: parseMonth(game.headers),
+      mo: dateParts.month,
+      da: dateParts.date,
       re: result,
       uw: userIsWhite,
+      ec: parseEco(game.headers),
       gl: gameLink || undefined,
       op: opponent || undefined,
     };
@@ -498,6 +570,95 @@ function emptyDB(): PersonalDBV2 {
   return { v: 2, games: [], positions: {}, fingerprints: [] };
 }
 
+function numOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function parseChesscomModeStats(raw: unknown): ChesscomModeStats | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const mode = raw as Record<string, unknown>;
+  const last = (mode.last && typeof mode.last === 'object') ? mode.last as Record<string, unknown> : {};
+  const best = (mode.best && typeof mode.best === 'object') ? mode.best as Record<string, unknown> : {};
+  const record = (mode.record && typeof mode.record === 'object') ? mode.record as Record<string, unknown> : {};
+
+  const currentRating = numOrNull(last.rating);
+  const currentDate = numOrNull(last.date);
+  const bestRating = numOrNull(best.rating);
+  const bestDate = numOrNull(best.date);
+  const wins = numOrNull(record.win) ?? 0;
+  const losses = numOrNull(record.loss) ?? 0;
+  const draws = numOrNull(record.draw) ?? 0;
+
+  if (currentRating == null && bestRating == null && wins === 0 && losses === 0 && draws === 0) {
+    return null;
+  }
+
+  return {
+    currentRating,
+    currentDate,
+    bestRating,
+    bestDate,
+    wins,
+    losses,
+    draws,
+  };
+}
+
+async function fetchChesscomStatsSnapshot(
+  username: string,
+  signal?: AbortSignal,
+): Promise<ChesscomStatsSnapshot | null> {
+  const resp = await fetch(
+    `https://api.chess.com/pub/player/${encodeURIComponent(username)}/stats`,
+    { signal },
+  );
+  if (!resp.ok) return null;
+
+  const data = await resp.json() as Record<string, unknown>;
+  const timeClassRatings: ChesscomStatsSnapshot['timeClassRatings'] = {};
+  const mapping: Record<'bullet' | 'blitz' | 'rapid' | 'daily' | 'classical', string> = {
+    bullet: 'chess_bullet',
+    blitz: 'chess_blitz',
+    rapid: 'chess_rapid',
+    daily: 'chess_daily',
+    classical: 'chess_classical',
+  };
+
+  for (const [timeClass, key] of Object.entries(mapping) as [keyof typeof mapping, string][]) {
+    const parsed = parseChesscomModeStats(data[key]);
+    if (!parsed) continue;
+    timeClassRatings[timeClass] = parsed;
+  }
+
+  if (Object.keys(timeClassRatings).length === 0) {
+    return null;
+  }
+
+  return {
+    fetchedAt: Date.now(),
+    timeClassRatings,
+  };
+}
+
+export async function refreshChesscomStats(signal?: AbortSignal): Promise<ChesscomStatsSnapshot | null> {
+  const cfg = getPersonalConfig();
+  if (!cfg || cfg.platform !== 'chesscom') return null;
+
+  try {
+    const snapshot = await fetchChesscomStatsSnapshot(cfg.username, signal);
+    if (!snapshot) return cfg.chesscomStats ?? null;
+    personalConfig = {
+      ...cfg,
+      chesscomStats: snapshot,
+    };
+    saveConfig(personalConfig);
+    return snapshot;
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return cfg.chesscomStats ?? null;
+  }
+}
+
 // ── Lichess Import ──
 
 export async function importFromLichess(
@@ -509,7 +670,7 @@ export async function importFromLichess(
   // Lichess always does fresh import for now (since param filtering changes results)
   const db = emptyDB();
 
-  let url = `https://lichess.org/api/games/user/${encodeURIComponent(username)}?pgnInBody=true&clocks=false&evals=false&opening=false`;
+  let url = `https://lichess.org/api/games/user/${encodeURIComponent(username)}?pgnInBody=true&clocks=false&evals=false&opening=true`;
   if (filters?.perfType && filters.perfType.length > 0) {
     url += `&perfType=${filters.perfType.join(',')}`;
   }
@@ -608,11 +769,25 @@ export async function importFromChesscom(
   const allArchives = archData.archives ?? [];
   if (allArchives.length === 0) throw new Error('No games found for this user');
 
+  onProgress('Fetching rating stats...', totalGames);
+  let statsSnapshot: ChesscomStatsSnapshot | null = null;
+  try {
+    statsSnapshot = await fetchChesscomStatsSnapshot(username, signal);
+  } catch (e) {
+    if (signal?.aborted) throw new Error('Import cancelled');
+    // Best-effort enrichment; ignore stats endpoint failures.
+  }
+
   let startIndex = 0;
   if (isIncremental) {
     if (lastArchive) {
       const lastIdx = allArchives.indexOf(lastArchive);
-      if (lastIdx >= 0) startIndex = lastIdx;
+      // lastCompletedArchive points to the most recently known completed month.
+      // Start from the next archive:
+      // - Same month refresh => fetch only current in-progress month
+      // - New month crossed => fetch previous month + current month
+      if (lastIdx >= 0) startIndex = Math.min(lastIdx + 1, allArchives.length - 1);
+      else startIndex = Math.max(0, allArchives.length - 2);
     } else {
       startIndex = Math.max(0, allArchives.length - 2);
     }
@@ -654,6 +829,7 @@ export async function importFromChesscom(
     lastImportTimestamp: Date.now(),
     gameCount: db.games.length,
     lastCompletedArchive: completedArchive,
+    chesscomStats: statsSnapshot ?? (isSameUser ? existingConfig?.chesscomStats : undefined),
   };
   saveConfig(personalConfig);
 

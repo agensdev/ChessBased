@@ -38,6 +38,9 @@ export interface VulnerableResponse {
 export interface VulnerabilityContext {
   ply: number; // 1-based ply of the user move after which responses are measured
   moveSan: string;
+  isFallback: boolean;
+  requestedPly: number;
+  actualPly: number;
 }
 
 export interface OpeningLine {
@@ -68,6 +71,34 @@ export interface OpeningLine {
   vulnerableResponses: VulnerableResponse[];
 }
 
+export interface OpeningFamily {
+  key: string;
+  color: 'white' | 'black';
+  eco: string | null;
+  rootName: string;
+  displayLabel: string;
+  baseLine: OpeningLine;
+  wdl: WDL;
+  winRate: number;
+  rawScorePct: number;
+  adjustedScorePct: number;
+  scoreCiPct: number;
+  confidence: 'high' | 'medium' | 'low';
+  deltaVsExpectedPct: number | null;
+  impact: number;
+  continuationSpreadPct: number;
+  continuations: OpeningLine[];
+  topWeakContinuations: OpeningLine[];
+  topStrongContinuation: OpeningLine | null;
+}
+
+export interface SideFamilyReport {
+  color: 'white' | 'black';
+  families: OpeningFamily[];
+  weakFamilies: OpeningFamily[];
+  bestFamilies: OpeningFamily[];
+}
+
 export interface MonthlyRating {
   month: string;
   avgRating: number;
@@ -88,6 +119,8 @@ export interface ReportData {
   asBlack: WDL;
   byTimeControl: TimeControlStats[];
   ratingTrend: MonthlyRating[];
+  whiteFamilyReport: SideFamilyReport | null;
+  blackFamilyReport: SideFamilyReport | null;
   whiteOpenings: OpeningLine[];
   blackOpenings: OpeningLine[];
   weaknessQueue: OpeningLine[];
@@ -140,14 +173,19 @@ type MoveGameIndicesFn = (fen: string, uci: string) => number[];
 type GameByIndexFn = (idx: number) => GameMeta | undefined;
 
 const MIN_GAMES_FOR_LINE = 5;
-const MIN_DEPTH = 2;  // at least 1 move per side
-const MAX_DEPTH = 8;  // 4 moves per side
+const MIN_DEPTH = 2; // at least 1 move per side
+const BASE_MAX_PLY = 8;
+const ADAPTIVE_MAX_PLY = 10;
+const ADAPTIVE_MIN_NODE_GAMES = 20;
 const PRIOR_WEIGHT = 12;
 const MIN_GAMES_FOR_CRITICAL_DROP = 5;
 const MIN_DROP_PCT = 4;
 const MAX_CRITICAL_DROPS = 3;
 const MIN_GAMES_FOR_VULNERABLE_RESPONSE = 3;
 const MAX_VULNERABLE_RESPONSES = 5;
+const MAX_WEAK_FAMILIES = 5;
+const MAX_BEST_FAMILIES = 3;
+const MAX_WEAK_CONTINUATION_SNIPPETS = 2;
 
 function walkOpenings(
   isWhite: boolean,
@@ -155,6 +193,15 @@ function walkOpenings(
 ): OpeningLine[] {
   const lines: OpeningLine[] = [];
   const visited = new Set<string>(); // dedup transpositions
+
+  function collectLine(moves: string[], ucis: string[], endFen: string): void {
+    if (ucis.length === 0) return;
+    const label = moves.join(' ');
+    if (lines.some(l => l.label === label)) return;
+
+    const line = makeOpeningLine(isWhite, moves, ucis, endFen, queryFn);
+    lines.push(line);
+  }
 
   function walk(
     chess: Chess,
@@ -177,6 +224,19 @@ function walkOpenings(
       return;
     }
 
+    const nodeGames = data.moves.reduce((sum, move) => sum + moveTotal(move), 0);
+    const maxPly = depth < BASE_MAX_PLY
+      ? BASE_MAX_PLY
+      : nodeGames >= ADAPTIVE_MIN_NODE_GAMES
+        ? ADAPTIVE_MAX_PLY
+        : BASE_MAX_PLY;
+    if (depth >= maxPly) {
+      if (depth >= MIN_DEPTH) {
+        collectLine(moves, ucis, fen);
+      }
+      return;
+    }
+
     // Follow all moves (both user and opponent) with enough games.
     let anyFollowed = false;
     for (const m of data.moves) {
@@ -192,13 +252,6 @@ function walkOpenings(
 
       const next = chess.clone();
       next.play(move);
-
-      if (depth >= MAX_DEPTH) {
-        const afterFen = makeFen(next.toSetup());
-        collectLine([...moves, san], [...ucis, m.uci], afterFen);
-        continue;
-      }
-
       walk(next, [...moves, san], [...ucis, m.uci], depth + 1);
     }
 
@@ -207,94 +260,152 @@ function walkOpenings(
     }
   }
 
-  function collectLine(moves: string[], ucis: string[], endFen: string): void {
-    const label = moves.join(' ');
-    if (lines.some(l => l.label === label)) return;
-    // Also dedup by end position (transpositions that diverged at the last move)
-    if (lines.some(l => l.endFen === endFen)) return;
-
-    // W/D/L: use the specific last move's stats from its parent position
-    const wdl = emptyWDL();
-    if (ucis.length > 0) {
-      const parentChess = Chess.default();
-      for (let i = 0; i < ucis.length - 1; i++) {
-        const m = parseUci(ucis[i]);
-        if (m) parentChess.play(m);
-      }
-      const parentFen = makeFen(parentChess.toSetup());
-      const parentData = queryFn(parentFen);
-      if (parentData) {
-        const lastUci = ucis[ucis.length - 1];
-        const moveData = parentData.moves.find(m => m.uci === lastUci);
-        if (moveData) {
-          wdl.total = moveData.white + moveData.draws + moveData.black;
-          if (isWhite) {
-            wdl.wins = moveData.white;
-            wdl.draws = moveData.draws;
-            wdl.losses = moveData.black;
-          } else {
-            wdl.wins = moveData.black;
-            wdl.draws = moveData.draws;
-            wdl.losses = moveData.white;
-          }
-        }
-      }
-    }
-
-    // Fallback: sum all continuations at end position
-    if (wdl.total === 0) {
-      const data = queryFn(endFen);
-      if (data) {
-        for (const m of data.moves) {
-          wdl.total += m.white + m.draws + m.black;
-          if (isWhite) {
-            wdl.wins += m.white;
-            wdl.draws += m.draws;
-            wdl.losses += m.black;
-          } else {
-            wdl.wins += m.black;
-            wdl.draws += m.draws;
-            wdl.losses += m.white;
-          }
-        }
-      }
-    }
-
-    const openingInfo = findOpeningForLine(endFen, ucis);
-    const displayLabel = openingInfo
-      ? openingInfo.name
-      : label;
-
-    lines.push({
-      label,
-      displayLabel,
-      moves,
-      ucis,
-      wdl,
-      winRate: winRate(wdl),
-      endFen,
-      color: isWhite ? 'white' : 'black',
-      openingName: openingInfo?.name ?? null,
-      eco: openingInfo?.eco ?? null,
-      rawScorePct: scorePct(wdl),
-      adjustedScorePct: scorePct(wdl),
-      scoreCiPct: 0,
-      confidence: 'low',
-      deltaVsExpectedPct: null,
-      impact: 0,
-      exampleLinks: { wins: [], losses: [], draws: [], all: [] },
-      criticalDrops: [],
-      vulnerabilityContext: null,
-      vulnerableResponses: [],
-    });
-  }
-
   const chess = Chess.default();
   walk(chess, [], [], 0);
 
   // Sort by game count descending
   lines.sort((a, b) => b.wdl.total - a.wdl.total);
   return lines;
+}
+
+function computeLineWdl(
+  ucis: string[],
+  isWhite: boolean,
+  queryFn: QueryFn,
+  endFen: string,
+): WDL {
+  const wdl = emptyWDL();
+  if (ucis.length > 0) {
+    const parentChess = Chess.default();
+    for (let i = 0; i < ucis.length - 1; i++) {
+      const m = parseUci(ucis[i]);
+      if (m) parentChess.play(m);
+    }
+    const parentFen = makeFen(parentChess.toSetup());
+    const parentData = queryFn(parentFen);
+    if (parentData) {
+      const lastUci = ucis[ucis.length - 1];
+      const moveData = parentData.moves.find(m => m.uci === lastUci);
+      if (moveData) {
+        wdl.total = moveData.white + moveData.draws + moveData.black;
+        if (isWhite) {
+          wdl.wins = moveData.white;
+          wdl.draws = moveData.draws;
+          wdl.losses = moveData.black;
+        } else {
+          wdl.wins = moveData.black;
+          wdl.draws = moveData.draws;
+          wdl.losses = moveData.white;
+        }
+      }
+    }
+  }
+
+  // Fallback: sum all continuations at end position.
+  if (wdl.total === 0) {
+    const data = queryFn(endFen);
+    if (data) {
+      for (const m of data.moves) {
+        wdl.total += m.white + m.draws + m.black;
+        if (isWhite) {
+          wdl.wins += m.white;
+          wdl.draws += m.draws;
+          wdl.losses += m.black;
+        } else {
+          wdl.wins += m.black;
+          wdl.draws += m.draws;
+          wdl.losses += m.white;
+        }
+      }
+    }
+  }
+
+  return wdl;
+}
+
+function makeOpeningLine(
+  isWhite: boolean,
+  moves: string[],
+  ucis: string[],
+  endFen: string,
+  queryFn: QueryFn,
+): OpeningLine {
+  const wdl = computeLineWdl(ucis, isWhite, queryFn, endFen);
+  const label = moves.join(' ');
+  const openingInfo = findOpeningForLine(endFen, ucis);
+  const displayLabel = openingInfo ? openingInfo.name : label;
+
+  return {
+    label,
+    displayLabel,
+    moves,
+    ucis,
+    wdl,
+    winRate: winRate(wdl),
+    endFen,
+    color: isWhite ? 'white' : 'black',
+    openingName: openingInfo?.name ?? null,
+    eco: openingInfo?.eco ?? null,
+    rawScorePct: scorePct(wdl),
+    adjustedScorePct: scorePct(wdl),
+    scoreCiPct: 0,
+    confidence: 'low',
+    deltaVsExpectedPct: null,
+    impact: 0,
+    exampleLinks: { wins: [], losses: [], draws: [], all: [] },
+    criticalDrops: [],
+    vulnerabilityContext: null,
+    vulnerableResponses: [],
+  };
+}
+
+function normalizeAndDedupeOpenings(
+  lines: OpeningLine[],
+  queryFn: QueryFn,
+): OpeningLine[] {
+  const dedup = new Map<string, OpeningLine>();
+
+  for (const line of lines) {
+    if (line.ucis.length === 0) continue;
+
+    let ucis = line.ucis;
+    let moves = line.moves;
+    const lastIdx = ucis.length - 1;
+    if (lastIdx >= 0 && !isUserMoveIndex(line.color, lastIdx)) {
+      ucis = ucis.slice(0, -1);
+      moves = moves.slice(0, -1);
+    }
+    if (ucis.length === 0) continue;
+
+    const fens = buildLineFens(ucis);
+    if (!fens) continue;
+    const endFen = fens[fens.length - 1];
+    const normalized = makeOpeningLine(line.color === 'white', moves, ucis, endFen, queryFn);
+    const key = `${normalized.color}|${positionKey(normalized.endFen)}`;
+    const existing = dedup.get(key);
+    if (!existing) {
+      dedup.set(key, normalized);
+      continue;
+    }
+
+    if (normalized.wdl.total > existing.wdl.total) {
+      dedup.set(key, normalized);
+      continue;
+    }
+    if (normalized.wdl.total === existing.wdl.total) {
+      if (normalized.ucis.length > existing.ucis.length) {
+        dedup.set(key, normalized);
+        continue;
+      }
+      if (normalized.ucis.length === existing.ucis.length && normalized.label.localeCompare(existing.label) < 0) {
+        dedup.set(key, normalized);
+      }
+    }
+  }
+
+  const out = [...dedup.values()];
+  out.sort((a, b) => b.wdl.total - a.wdl.total || b.ucis.length - a.ucis.length || a.label.localeCompare(b.label));
+  return out;
 }
 
 function findOpeningForLine(endFen: string, ucis: string[]): { name: string; eco: string } | null {
@@ -424,39 +535,56 @@ function computeVulnerableResponses(
   const fens = buildLineFens(line.ucis);
   if (!fens) return { context: null, responses: [] };
 
-  let contextMoveIdx = -1;
+  let deepestUserMoveIdx = -1;
   for (let i = 0; i < line.ucis.length; i++) {
-    if (isUserMoveIndex(line.color, i)) contextMoveIdx = i;
+    if (isUserMoveIndex(line.color, i)) deepestUserMoveIdx = i;
   }
-  if (contextMoveIdx < 0) return { context: null, responses: [] };
+  if (deepestUserMoveIdx < 0) return { context: null, responses: [] };
 
-  const contextPly = contextMoveIdx + 1;
-  const contextFen = fens[contextPly];
-  const data = queryFn(contextFen);
-  if (!data || data.moves.length === 0) {
-    return {
-      context: {
-        ply: contextPly,
-        moveSan: line.moves[contextMoveIdx] ?? '',
-      },
-      responses: [],
-    };
-  }
-
+  const requestedPly = deepestUserMoveIdx + 1;
   const isWhite = line.color === 'white';
-  const nodeGames = data.moves.reduce((sum, move) => sum + moveTotal(move), 0);
-  if (nodeGames === 0) {
+
+  let selectedMoveIdx = deepestUserMoveIdx;
+  let selectedData: ExplorerResponse | null = null;
+
+  for (let i = deepestUserMoveIdx; i >= 0; i--) {
+    if (!isUserMoveIndex(line.color, i)) continue;
+    const contextPly = i + 1;
+    const data = queryFn(fens[contextPly]);
+    if (!data || data.moves.length === 0) continue;
+    const hasEligibleReply = data.moves.some(move => moveTotal(move) >= MIN_GAMES_FOR_VULNERABLE_RESPONSE);
+    if (!hasEligibleReply) continue;
+    selectedMoveIdx = i;
+    selectedData = data;
+    break;
+  }
+
+  const context: VulnerabilityContext = {
+    ply: selectedMoveIdx + 1,
+    moveSan: line.moves[selectedMoveIdx] ?? '',
+    isFallback: selectedMoveIdx !== deepestUserMoveIdx,
+    requestedPly,
+    actualPly: selectedMoveIdx + 1,
+  };
+
+  if (!selectedData) {
     return {
       context: {
-        ply: contextPly,
-        moveSan: line.moves[contextMoveIdx] ?? '',
+        ply: requestedPly,
+        moveSan: line.moves[deepestUserMoveIdx] ?? '',
+        isFallback: false,
+        requestedPly,
+        actualPly: requestedPly,
       },
       responses: [],
     };
   }
+
+  const nodeGames = selectedData.moves.reduce((sum, move) => sum + moveTotal(move), 0);
+  if (nodeGames === 0) return { context, responses: [] };
 
   const rows: VulnerableResponse[] = [];
-  for (const move of data.moves) {
+  for (const move of selectedData.moves) {
     const games = moveTotal(move);
     if (games < MIN_GAMES_FOR_VULNERABLE_RESPONSE) continue;
 
@@ -476,14 +604,7 @@ function computeVulnerableResponses(
   }
 
   rows.sort((a, b) => b.vulnerability - a.vulnerability || b.games - a.games);
-
-  return {
-    context: {
-      ply: contextPly,
-      moveSan: line.moves[contextMoveIdx] ?? '',
-    },
-    responses: rows.slice(0, MAX_VULNERABLE_RESPONSES),
-  };
+  return { context, responses: rows.slice(0, MAX_VULNERABLE_RESPONSES) };
 }
 
 function getParentFenAndLastUci(ucis: string[]): { fen: string; uci: string } | null {
@@ -504,23 +625,26 @@ function buildLineExamples(
   indices: number[],
   getGameByIndex: GameByIndexFn,
 ): { wins: string[]; losses: string[]; draws: string[]; all: string[] } {
-  const rows: { href: string; result: 'win' | 'draw' | 'loss'; month: string; idx: number }[] = [];
+  const rows: { href: string; result: 'win' | 'draw' | 'loss'; date: string; idx: number }[] = [];
 
   for (const idx of indices) {
     const g = getGameByIndex(idx);
     if (!g?.gl) continue;
+    const date = g.da && g.da !== 'unknown'
+      ? g.da
+      : (g.mo && g.mo !== 'unknown' ? `${g.mo}-01` : '');
     rows.push({
       href: g.gl,
       result: userResult(g),
-      month: g.mo ?? '',
+      date,
       idx,
     });
   }
 
-  // Most recent first (month desc, then index desc as stable fallback)
+  // Most recent first (date desc, then index desc as stable fallback)
   rows.sort((a, b) => {
-    const am = a.month && a.month !== 'unknown' ? a.month : '';
-    const bm = b.month && b.month !== 'unknown' ? b.month : '';
+    const am = a.date && a.date !== 'unknown' ? a.date : '';
+    const bm = b.date && b.date !== 'unknown' ? b.date : '';
     if (am !== bm) return bm.localeCompare(am);
     return b.idx - a.idx;
   });
@@ -537,6 +661,148 @@ function adjustedScore(raw: number, total: number, globalScore: number): number 
   return total > 0
     ? ((raw * total) + (globalScore * PRIOR_WEIGHT)) / (total + PRIOR_WEIGHT)
     : globalScore;
+}
+
+function lineStrength(line: OpeningLine, globalScore: number): number {
+  const adj = adjustedScore(scoreRate(line.wdl), line.wdl.total, globalScore);
+  return Math.max(0, adj - globalScore) * line.wdl.total;
+}
+
+function familyRootName(line: OpeningLine): string {
+  const fromName = line.openingName?.split(':')[0]?.trim();
+  if (fromName) return fromName;
+  const fromSan = line.moves.slice(0, 4).join(' ').trim();
+  if (fromSan) return fromSan;
+  return 'Unclassified';
+}
+
+function familyWeakSort(a: OpeningLine, b: OpeningLine): number {
+  return b.impact - a.impact
+    || a.adjustedScorePct - b.adjustedScorePct
+    || b.wdl.total - a.wdl.total
+    || a.label.localeCompare(b.label);
+}
+
+function familyStrongSort(a: OpeningLine, b: OpeningLine, globalScore: number): number {
+  return lineStrength(b, globalScore) - lineStrength(a, globalScore)
+    || b.adjustedScorePct - a.adjustedScorePct
+    || b.wdl.total - a.wdl.total
+    || a.label.localeCompare(b.label);
+}
+
+function lineStartsWith(line: OpeningLine, prefix: OpeningLine): boolean {
+  if (line.ucis.length <= prefix.ucis.length) return false;
+  for (let i = 0; i < prefix.ucis.length; i++) {
+    if (line.ucis[i] !== prefix.ucis[i]) return false;
+  }
+  return true;
+}
+
+function aggregateFamilies(
+  lines: OpeningLine[],
+  color: 'white' | 'black',
+  globalScore: number,
+): SideFamilyReport | null {
+  if (lines.length === 0) return null;
+
+  const grouped = new Map<string, OpeningLine[]>();
+  for (const line of lines) {
+    const rootName = familyRootName(line);
+    // Group by side + opening family name so nearby ECO subcodes (e.g. C33/C34)
+    // collapse into one family with deeper branches as continuations.
+    const key = `${line.color}|${rootName.toLowerCase()}`;
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(line);
+    else grouped.set(key, [line]);
+  }
+
+  const families: OpeningFamily[] = [];
+  for (const [key, groupedLines] of grouped) {
+    const weakBaseCandidates = groupedLines.filter(line => line.impact > 0);
+    const basePool = weakBaseCandidates.length > 0 ? weakBaseCandidates : groupedLines;
+    const baseLine = [...basePool].sort((a, b) =>
+      a.ucis.length - b.ucis.length
+        || b.impact - a.impact
+        || b.wdl.total - a.wdl.total
+        || a.label.localeCompare(b.label)
+    )[0];
+    const continuationLines = groupedLines.filter(line => lineStartsWith(line, baseLine));
+    const sortedWeak = [...continuationLines].sort(familyWeakSort);
+    const sortedStrong = [...continuationLines].sort((a, b) => familyStrongSort(a, b, globalScore));
+
+    // Use base-line totals for family-level score/priority so counts are not
+    // double-counted across overlapping deeper continuations.
+    const wdl: WDL = {
+      wins: baseLine.wdl.wins,
+      draws: baseLine.wdl.draws,
+      losses: baseLine.wdl.losses,
+      total: baseLine.wdl.total,
+    };
+
+    const raw = scoreRate(wdl);
+    const adj = adjustedScore(raw, wdl.total, globalScore);
+    const ci = wdl.total > 0 ? 1.96 * Math.sqrt((adj * (1 - adj)) / wdl.total) : 0;
+    const rootName = familyRootName(groupedLines[0]);
+    const eco = baseLine.eco ?? groupedLines.find(l => l.eco)?.eco ?? null;
+    const spread = continuationLines.length > 1
+      ? Math.max(...continuationLines.map(l => l.adjustedScorePct)) - Math.min(...continuationLines.map(l => l.adjustedScorePct))
+      : 0;
+
+    const topStrong = sortedStrong.find(line => lineStrength(line, globalScore) > 0) ?? null;
+    const family: OpeningFamily = {
+      key,
+      color,
+      eco,
+      rootName,
+      displayLabel: rootName,
+      baseLine,
+      wdl,
+      winRate: winRate(wdl),
+      rawScorePct: Math.round(raw * 100),
+      adjustedScorePct: Math.round(adj * 100),
+      scoreCiPct: Math.round(ci * 1000) / 10,
+      confidence: confidenceFromGames(wdl.total),
+      deltaVsExpectedPct: baseLine.deltaVsExpectedPct,
+      impact: Math.round(Math.max(0, globalScore - adj) * wdl.total * 100) / 100,
+      continuationSpreadPct: spread,
+      continuations: sortedWeak,
+      topWeakContinuations: sortedWeak.slice(0, MAX_WEAK_CONTINUATION_SNIPPETS),
+      topStrongContinuation: topStrong,
+    };
+
+    families.push(family);
+  }
+
+  families.sort((a, b) =>
+    b.impact - a.impact
+    || a.adjustedScorePct - b.adjustedScorePct
+    || b.wdl.total - a.wdl.total
+    || a.displayLabel.localeCompare(b.displayLabel)
+  );
+
+  const weakFamilies = families
+    .filter(f => f.impact > 0)
+    .slice(0, MAX_WEAK_FAMILIES);
+
+  const weakKeys = new Set(weakFamilies.map(f => f.key));
+  const bestFamilies = [...families]
+    .filter(f => !weakKeys.has(f.key))
+    .sort((a, b) => {
+      const aStrength = Math.max(0, (a.adjustedScorePct / 100) - globalScore) * a.wdl.total;
+      const bStrength = Math.max(0, (b.adjustedScorePct / 100) - globalScore) * b.wdl.total;
+      return bStrength - aStrength
+        || b.adjustedScorePct - a.adjustedScorePct
+        || b.wdl.total - a.wdl.total
+        || a.displayLabel.localeCompare(b.displayLabel);
+    })
+    .slice(0, MAX_BEST_FAMILIES);
+
+  return {
+    color,
+    families,
+    weakFamilies,
+    bestFamilies,
+  };
 }
 
 function lineKey(line: OpeningLine): string {
@@ -694,26 +960,36 @@ export function generateReport(
   }
   ratingTrend.sort((a, b) => a.month.localeCompare(b.month));
 
-  // Opening trees — filter by color so we only see games where the user played that side
+  // Opening trees — filter by color so we only see games where the user played that side.
   const globalScore = scoreRate(overall);
+  const whiteBaselineScore = asWhite.total > 0 ? scoreRate(asWhite) : globalScore;
+  const blackBaselineScore = asBlack.total > 0 ? scoreRate(asBlack) : globalScore;
   let whiteOpenings: OpeningLine[] = [];
   let blackOpenings: OpeningLine[] = [];
 
   if (sideFilter !== 'black') {
     syncColorFilter?.('white');
-    whiteOpenings = walkOpenings(true, queryFn);
-    enrichOpeningLines(whiteOpenings, globalScore, queryFn, moveGameIndicesFn, gameByIndexFn);
+    const rawWhite = walkOpenings(true, queryFn);
+    whiteOpenings = normalizeAndDedupeOpenings(rawWhite, queryFn);
+    enrichOpeningLines(whiteOpenings, whiteBaselineScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 
   if (sideFilter !== 'white') {
     syncColorFilter?.('black');
-    blackOpenings = walkOpenings(false, queryFn);
-    enrichOpeningLines(blackOpenings, globalScore, queryFn, moveGameIndicesFn, gameByIndexFn);
+    const rawBlack = walkOpenings(false, queryFn);
+    blackOpenings = normalizeAndDedupeOpenings(rawBlack, queryFn);
+    enrichOpeningLines(blackOpenings, blackBaselineScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 
   syncColorFilter?.(null);
+  const whiteFamilyReport = sideFilter === 'black'
+    ? null
+    : aggregateFamilies(whiteOpenings, 'white', whiteBaselineScore);
+  const blackFamilyReport = sideFilter === 'white'
+    ? null
+    : aggregateFamilies(blackOpenings, 'black', blackBaselineScore);
 
-  // Key findings: lines with >= 10 games, best by adjusted score, weak by impact
+  // Legacy line-based key findings kept for compatibility while UI migrates.
   const MIN_GAMES_FOR_FINDING = 10;
   const allLines = [
     ...whiteOpenings.filter(l => l.wdl.total >= MIN_GAMES_FOR_FINDING),
@@ -794,6 +1070,8 @@ export function generateReport(
     asBlack,
     byTimeControl,
     ratingTrend,
+    whiteFamilyReport,
+    blackFamilyReport,
     whiteOpenings,
     blackOpenings,
     weaknessQueue,

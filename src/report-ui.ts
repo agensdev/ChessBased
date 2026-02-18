@@ -6,10 +6,18 @@ import { makeFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
 import {
   getPersonalConfig, getPersonalGames, queryPersonalExplorer, hasPersonalData,
-  getPersonalStats, getPersonalFilters, setPersonalFilters, queryPersonalMoveGameIndices,
-  type GameMeta, type PersonalFilters,
+  getPersonalStats, getPersonalFilters, setPersonalFilters, queryPersonalMoveGameIndices, refreshChesscomStats,
+  importFromLichess, importFromChesscom,
+  type GameMeta, type LichessFilters, type PersonalConfig, type PersonalFilters,
 } from './personal-explorer';
-import { generateReport, type ReportData, type OpeningLine, type WDL } from './report';
+import {
+  generateReport,
+  type OpeningFamily,
+  type OpeningLine,
+  type ReportData,
+  type SideFamilyReport,
+  type WDL,
+} from './report';
 import { loadConfig } from './config';
 import type { MoveHistoryEntry } from './types';
 
@@ -31,6 +39,8 @@ let reportCg: Api | null = null;
 let savedFilters: PersonalFilters = {};
 let reportFilters: ReportFilters = {};
 let reportCurrentRating: number | null = null;
+let reportCurrentRatingInfo: { timeClass: string; current: number; best: number | null } | null = null;
+let reportRefreshInProgress = false;
 const REPORT_OPEN_SESSION_KEY = 'chessbased-report-open';
 const REPORT_GUIDE_OPEN_KEY = 'chessbased-report-guide-open';
 const CURRENT_RATING_WINDOW = 100;
@@ -43,13 +53,14 @@ let lineLastMoves: (Key[] | undefined)[] = []; // lastMove highlight per ply
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
 let theoryOverlayEl: HTMLElement | null = null;
 let lineGameResultFilter: 'all' | 'win' | 'draw' | 'loss' = 'all';
+const MAX_PRIORITY_FAMILY_CARDS = 4;
 
 interface ReportFilters {
   timeClasses?: string[];
   minRating?: number;
   maxRating?: number;
-  sinceMonth?: string;
-  untilMonth?: string;
+  sinceDate?: string;
+  untilDate?: string;
   color?: 'white' | 'black';
 }
 
@@ -115,7 +126,7 @@ export function closeReportPage(): void {
   document.getElementById('app')!.style.display = '';
 }
 
-export function openReportPage(): void {
+export async function openReportPage(): Promise<void> {
   if (reportOpen) return;
   reportOpen = true;
   persistReportOpenState(true);
@@ -123,7 +134,18 @@ export function openReportPage(): void {
   savedFilters = getPersonalFilters();
   // Initialize report filters from main config speeds
   const appConfig = loadConfig();
-  reportCurrentRating = inferCurrentRating(getPersonalGames() ?? [], appConfig.speeds);
+  let explorerConfig = getPersonalConfig();
+  if (explorerConfig?.platform === 'chesscom') {
+    try {
+      await refreshChesscomStats();
+      explorerConfig = getPersonalConfig();
+    } catch {
+      // Best effort only; continue with cached stats.
+    }
+  }
+  reportCurrentRatingInfo = inferCurrentRatingInfo(explorerConfig, appConfig.speeds);
+  reportCurrentRating = reportCurrentRatingInfo?.current
+    ?? inferCurrentRating(getPersonalGames() ?? [], appConfig.speeds, explorerConfig);
   reportFilters = {
     timeClasses: [...appConfig.speeds],
     minRating: reportCurrentRating != null ? reportCurrentRating - CURRENT_RATING_WINDOW : undefined,
@@ -135,7 +157,7 @@ export function openReportPage(): void {
   page.classList.remove('hidden');
   page.innerHTML = '';
 
-  const config = getPersonalConfig();
+  const config = explorerConfig;
   const games = getPersonalGames();
 
   if (!hasPersonalData() || !games || !config) {
@@ -167,18 +189,30 @@ function renderEmptyState(page: HTMLElement): void {
 
 function filterGames(games: readonly GameMeta[], filters: ReportFilters): GameMeta[] {
   if (!hasActiveFilters(filters)) return [...games];
-  return games.filter(g => {
-    if (filters.timeClasses && filters.timeClasses.length > 0) {
-      if (!filters.timeClasses.includes(g.tc)) return false;
-    }
-    if (filters.minRating != null && g.ur < filters.minRating) return false;
-    if (filters.maxRating != null && g.ur > filters.maxRating) return false;
-    if (filters.sinceMonth && g.mo < filters.sinceMonth) return false;
-    if (filters.untilMonth && g.mo > filters.untilMonth) return false;
-    if (filters.color === 'white' && !g.uw) return false;
-    if (filters.color === 'black' && g.uw) return false;
-    return true;
-  });
+  return games.filter(g => gameMatchesReportFilters(g, filters));
+}
+
+function filterGameIndices(games: readonly GameMeta[], filters: ReportFilters): number[] {
+  if (!hasActiveFilters(filters)) return games.map((_, i) => i);
+  const out: number[] = [];
+  for (let i = 0; i < games.length; i++) {
+    if (gameMatchesReportFilters(games[i], filters)) out.push(i);
+  }
+  return out;
+}
+
+function gameMatchesReportFilters(g: GameMeta, filters: ReportFilters): boolean {
+  if (filters.timeClasses && filters.timeClasses.length > 0) {
+    if (!filters.timeClasses.includes(g.tc)) return false;
+  }
+  if (filters.minRating != null && g.ur < filters.minRating) return false;
+  if (filters.maxRating != null && g.ur > filters.maxRating) return false;
+  const dateKey = gameDateSortKey(g);
+  if (filters.sinceDate && (!dateKey || dateKey < filters.sinceDate)) return false;
+  if (filters.untilDate && (!dateKey || dateKey > filters.untilDate)) return false;
+  if (filters.color === 'white' && !g.uw) return false;
+  if (filters.color === 'black' && g.uw) return false;
+  return true;
 }
 
 function hasActiveFilters(f: ReportFilters): boolean {
@@ -186,36 +220,74 @@ function hasActiveFilters(f: ReportFilters): boolean {
     (f.timeClasses && f.timeClasses.length > 0) ||
     f.minRating != null ||
     f.maxRating != null ||
-    f.sinceMonth ||
-    f.untilMonth ||
+    f.sinceDate ||
+    f.untilDate ||
     f.color
   );
 }
 
-function inferCurrentRating(games: readonly GameMeta[], preferredTimeClasses: string[]): number | null {
+function gameDateSortKey(game: GameMeta): string | null {
+  if (game.da && game.da !== 'unknown') return game.da;
+  if (game.mo && game.mo !== 'unknown') return `${game.mo}-01`;
+  return null;
+}
+
+function inferCurrentRating(
+  games: readonly GameMeta[],
+  preferredTimeClasses: string[],
+  personalConfig: PersonalConfig | null,
+): number | null {
+  const snapshotInfo = inferCurrentRatingInfo(personalConfig, preferredTimeClasses);
+  if (snapshotInfo) {
+    return snapshotInfo.current;
+  }
+
   const validAll = games.filter(g => g.ur > 0);
   if (validAll.length === 0) return null;
 
-  let pool = validAll;
+  // Use the latest imported user rating. Prefer configured time classes if available.
   if (preferredTimeClasses.length > 0) {
-    const preferred = validAll.filter(g => preferredTimeClasses.includes(g.tc));
-    if (preferred.length > 0) pool = preferred;
-  }
-
-  const monthPool = pool.filter(g => g.mo && g.mo !== 'unknown');
-  if (monthPool.length > 0) {
-    const latestMonth = monthPool.reduce((max, g) => g.mo > max ? g.mo : max, monthPool[0].mo);
-    const latestGames = monthPool.filter(g => g.mo === latestMonth);
-    if (latestGames.length > 0) {
-      const avg = latestGames.reduce((sum, g) => sum + g.ur, 0) / latestGames.length;
-      return Math.round(avg);
+    for (let i = validAll.length - 1; i >= 0; i--) {
+      if (preferredTimeClasses.includes(validAll[i].tc)) {
+        return Math.round(validAll[i].ur);
+      }
     }
   }
 
-  // Fallback when month is unknown: average over last chunk
-  const recent = pool.slice(-30);
-  const avg = recent.reduce((sum, g) => sum + g.ur, 0) / recent.length;
-  return Math.round(avg);
+  return Math.round(validAll[validAll.length - 1].ur);
+}
+
+function inferCurrentRatingInfo(
+  personalConfig: PersonalConfig | null,
+  preferredTimeClasses: string[],
+): { timeClass: string; current: number; best: number | null } | null {
+  const statsSnapshot = personalConfig?.platform === 'chesscom'
+    ? personalConfig.chesscomStats
+    : undefined;
+  if (!statsSnapshot) return null;
+
+  const ratings = statsSnapshot.timeClassRatings;
+  for (const tc of preferredTimeClasses) {
+    const mode = ratings[tc as keyof typeof ratings];
+    if (mode?.currentRating != null && mode.currentRating > 0) {
+      return {
+        timeClass: tc,
+        current: Math.round(mode.currentRating),
+        best: mode.bestRating != null ? Math.round(mode.bestRating) : null,
+      };
+    }
+  }
+  for (const tc of ['blitz', 'rapid', 'bullet', 'daily', 'classical'] as const) {
+    const mode = ratings[tc];
+    if (mode?.currentRating != null && mode.currentRating > 0) {
+      return {
+        timeClass: tc,
+        current: Math.round(mode.currentRating),
+        best: mode.bestRating != null ? Math.round(mode.bestRating) : null,
+      };
+    }
+  }
+  return null;
 }
 
 function isUsingCurrentRatingWindow(filters: ReportFilters): boolean {
@@ -231,8 +303,8 @@ function syncExplorerFilters(filters: ReportFilters): void {
     timeClasses: filters.timeClasses,
     minRating: filters.minRating,
     maxRating: filters.maxRating,
-    sinceMonth: filters.sinceMonth,
-    untilMonth: filters.untilMonth,
+    sinceDate: filters.sinceDate,
+    untilDate: filters.untilDate,
     color: filters.color,
   });
 }
@@ -253,9 +325,57 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
   backBtn.addEventListener('click', closeReportPage);
   const title = el('span', 'report-title');
   title.textContent = 'Game Report';
+  const right = el('div', 'report-header-right');
   const user = el('span', 'report-username');
   user.textContent = username;
-  header.append(backBtn, title, user);
+  const refreshBtn = el('button', 'report-refresh-btn') as HTMLButtonElement;
+  refreshBtn.textContent = reportRefreshInProgress ? 'Refreshing...' : 'Refresh games';
+  refreshBtn.disabled = reportRefreshInProgress;
+  const refreshStatus = el('span', 'report-refresh-status');
+  refreshStatus.textContent = '';
+  refreshBtn.addEventListener('click', async () => {
+    if (reportRefreshInProgress) return;
+    const beforeCount = allGames.length;
+    reportRefreshInProgress = true;
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing...';
+    refreshStatus.textContent = 'Starting refresh...';
+
+    const onProgress = (msg: string, count: number) => {
+      refreshStatus.textContent = `${msg} (${formatNum(count)} games)`;
+    };
+
+    try {
+      const importedTotal = await refreshImportedGames(onProgress);
+      const appConfig = loadConfig();
+      const updatedConfig = getPersonalConfig();
+      const updatedGames = getPersonalGames();
+      const afterCount = updatedGames?.length ?? importedTotal;
+      const newGames = Math.max(0, afterCount - beforeCount);
+      reportCurrentRatingInfo = inferCurrentRatingInfo(updatedConfig, appConfig.speeds);
+      reportCurrentRating = reportCurrentRatingInfo?.current
+        ?? inferCurrentRating(updatedGames ?? [], appConfig.speeds, updatedConfig);
+      reportRefreshInProgress = false;
+      if (updatedGames && updatedConfig) {
+        renderPage(page, updatedGames, updatedConfig.username);
+      } else {
+        rerender();
+      }
+      const refreshedStatus = document.querySelector('.report-refresh-status');
+      if (refreshedStatus) {
+        refreshedStatus.textContent = newGames > 0
+          ? `Refresh complete: +${formatNum(newGames)} new (${formatNum(afterCount)} total).`
+          : `Refresh complete: no new games (${formatNum(afterCount)} total).`;
+      }
+    } catch (e) {
+      reportRefreshInProgress = false;
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = 'Refresh games';
+      refreshStatus.textContent = e instanceof Error ? e.message : 'Refresh failed';
+    }
+  });
+  right.append(user, refreshBtn, refreshStatus);
+  header.append(backBtn, title, right);
   page.append(header);
 
   // Filter bar
@@ -287,8 +407,8 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
       timeClasses: reportFilters.timeClasses,
       minRating: reportFilters.minRating,
       maxRating: reportFilters.maxRating,
-      sinceMonth: reportFilters.sinceMonth,
-      untilMonth: reportFilters.untilMonth,
+      sinceDate: reportFilters.sinceDate,
+      untilDate: reportFilters.untilDate,
       color: color ?? undefined,
     });
   }, queryPersonalMoveGameIndices, (idx) => allGames[idx], reportFilters.color);
@@ -333,6 +453,25 @@ function rerender(): void {
   renderPage(page, games, config.username);
 }
 
+async function refreshImportedGames(
+  onProgress: (msg: string, count: number) => void,
+): Promise<number> {
+  const cfg = getPersonalConfig();
+  if (!cfg) throw new Error('No import configuration found.');
+
+  if (cfg.platform === 'lichess') {
+    const appConfig = loadConfig();
+    const speeds = appConfig.speeds;
+    const filters: LichessFilters = {};
+    if (speeds.length > 0 && speeds.length < 4) {
+      filters.perfType = speeds;
+    }
+    return importFromLichess(cfg.username, onProgress, undefined, filters);
+  }
+
+  return importFromChesscom(cfg.username, onProgress);
+}
+
 // ── Filter Bar ──
 
 function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _username: string): void {
@@ -363,27 +502,33 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     bar.append(group);
   }
 
-  // Date presets
-  if (stats.months.length > 1) {
+  // Date range + presets
+  if (stats.minDate && stats.maxDate) {
     const group = el('div', 'report-filter-group');
     const label = el('span', 'report-filter-label');
-    label.textContent = 'Period';
+    label.textContent = 'Date';
     group.append(label);
 
-    const now = new Date();
-    const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const threeAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const threeMonth = `${threeAgo.getFullYear()}-${String(threeAgo.getMonth() + 1).padStart(2, '0')}`;
-    const sixAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    const sixMonth = `${sixAgo.getFullYear()}-${String(sixAgo.getMonth() + 1).padStart(2, '0')}`;
-    const yearAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-    const yearMonth = `${yearAgo.getFullYear()}-${String(yearAgo.getMonth() + 1).padStart(2, '0')}`;
+    const today = new Date();
+    const parseYmd = (ymd: string): Date => {
+      const [y, m, d] = ymd.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+    const toYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const todayYmd = toYmd(today);
+    const rangeEndYmd = stats.maxDate < todayYmd ? stats.maxDate : todayYmd;
+    const rangeEnd = parseYmd(rangeEndYmd);
+    const monthsAgo = (n: number) => {
+      const d = new Date(rangeEnd);
+      d.setMonth(rangeEnd.getMonth() - n);
+      return toYmd(d);
+    };
 
     const presets = [
       { label: 'All time', since: '', until: '' },
-      { label: '12 months', since: yearMonth, until: curMonth },
-      { label: '6 months', since: sixMonth, until: curMonth },
-      { label: '3 months', since: threeMonth, until: curMonth },
+      { label: '12m', since: monthsAgo(12), until: rangeEndYmd },
+      { label: '3m', since: monthsAgo(3), until: rangeEndYmd },
+      { label: '1m', since: monthsAgo(1), until: rangeEndYmd },
     ];
 
     const segment = el('div', 'segment-picker segment-sm') as HTMLDivElement;
@@ -395,23 +540,52 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
       segmentBtn.type = 'button';
       segmentBtn.dataset.since = preset.since;
       segmentBtn.dataset.until = preset.until;
-      const isActive = (reportFilters.sinceMonth ?? '') === preset.since &&
-        (reportFilters.untilMonth ?? '') === preset.until;
+      const isActive = (reportFilters.sinceDate ?? '') === preset.since &&
+        (reportFilters.untilDate ?? '') === preset.until;
       if (isActive) segmentBtn.classList.add('selected');
       segmentBtn.textContent = preset.label;
       segmentBtn.setAttribute('role', 'radio');
       segmentBtn.setAttribute('aria-checked', isActive ? 'true' : 'false');
       segmentBtn.tabIndex = isActive ? 0 : -1;
       segmentBtn.addEventListener('click', () => {
-        if ((reportFilters.sinceMonth ?? '') === preset.since &&
-          (reportFilters.untilMonth ?? '') === preset.until) return;
-        reportFilters.sinceMonth = preset.since || undefined;
-        reportFilters.untilMonth = preset.until || undefined;
+        if ((reportFilters.sinceDate ?? '') === preset.since &&
+          (reportFilters.untilDate ?? '') === preset.until) return;
+        reportFilters.sinceDate = preset.since || undefined;
+        reportFilters.untilDate = preset.until || undefined;
         rerender();
       });
       segment.append(segmentBtn);
     }
     group.append(segment);
+
+    const fromInput = document.createElement('input');
+    fromInput.type = 'date';
+    fromInput.className = 'report-filter-input report-filter-date';
+    fromInput.min = stats.minDate;
+    fromInput.max = stats.maxDate;
+    fromInput.value = reportFilters.sinceDate ?? '';
+    fromInput.title = 'From date';
+
+    const sep = el('span', 'report-filter-sep');
+    sep.textContent = '–';
+
+    const toInput = document.createElement('input');
+    toInput.type = 'date';
+    toInput.className = 'report-filter-input report-filter-date';
+    toInput.min = stats.minDate;
+    toInput.max = stats.maxDate;
+    toInput.value = reportFilters.untilDate ?? '';
+    toInput.title = 'To date';
+
+    const applyDateInputs = () => {
+      reportFilters.sinceDate = fromInput.value || undefined;
+      reportFilters.untilDate = toInput.value || undefined;
+      rerender();
+    };
+    fromInput.addEventListener('change', applyDateInputs);
+    toInput.addEventListener('change', applyDateInputs);
+
+    group.append(fromInput, sep, toInput);
     bar.append(group);
   }
 
@@ -482,7 +656,7 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
       relevantChip.textContent = 'Relevant';
       relevantChip.setAttribute(
         'data-tooltip',
-        `Relevant: filter rating range to your current level ±${CURRENT_RATING_WINDOW}.`,
+        `Relevant: filter rating range to your current rating ±${CURRENT_RATING_WINDOW}.`,
       );
       relevantChip.classList.add('tooltip-wide');
       if (isUsingCurrentRatingWindow(reportFilters)) relevantChip.classList.add('selected');
@@ -566,22 +740,17 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   const mainCol = el('div', 'report-main-col');
   body.append(mainCol);
 
-  // Priority weaknesses (actionable queue)
-  if (report.weaknessQueue.length > 0) {
-    renderWeaknessQueue(mainCol, report.weaknessQueue);
+  renderCombinedPriorityFamilies(mainCol, report);
+  if (report.whiteFamilyReport) {
+    renderSideFamilySections(mainCol, report.whiteFamilyReport, 'White');
   }
-
-  // Positive lines
-  if (report.bestScoreOpenings.length > 0 || report.bestOpenings.length > 0) {
-    renderHighlights(mainCol, report.bestScoreOpenings, report.bestOpenings);
+  if (report.blackFamilyReport) {
+    renderSideFamilySections(mainCol, report.blackFamilyReport, 'Black');
   }
-
-  // Opening tables
-  if (report.whiteOpenings.length > 0) {
-    renderOpeningTable(mainCol, 'White Openings', report.whiteOpenings);
-  }
-  if (report.blackOpenings.length > 0) {
-    renderOpeningTable(mainCol, 'Black Openings', report.blackOpenings);
+  if (!report.whiteFamilyReport && !report.blackFamilyReport) {
+    const empty = el('div', 'report-empty');
+    empty.textContent = 'No openings available for this filter set.';
+    mainCol.append(empty);
   }
 
   // Board column (sticky) — board + nav + games
@@ -635,8 +804,8 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
       timeClasses: reportFilters.timeClasses,
       minRating: reportFilters.minRating,
       maxRating: reportFilters.maxRating,
-      sinceMonth: reportFilters.sinceMonth,
-      untilMonth: reportFilters.untilMonth,
+      sinceDate: reportFilters.sinceDate,
+      untilDate: reportFilters.untilDate,
       color: reportFilters.color,
     };
     reportNavigateCallback(moves, fen, selectedLine.color, filters);
@@ -689,8 +858,22 @@ function renderCompactOverview(parent: HTMLElement, report: ReportData): void {
     { label: 'As White', value: `${winRatePct(report.asWhite)}%` },
     { label: 'As Black', value: `${winRatePct(report.asBlack)}%` },
   ];
+  if (reportCurrentRatingInfo) {
+    stats.push({
+      label: `Current ${capitalize(reportCurrentRatingInfo.timeClass)}`,
+      value: `${reportCurrentRatingInfo.current}`,
+    });
+    if (reportCurrentRatingInfo.best != null && reportCurrentRatingInfo.best > 0) {
+      stats.push({
+        label: `Best ${capitalize(reportCurrentRatingInfo.timeClass)}`,
+        value: `${reportCurrentRatingInfo.best}`,
+      });
+    }
+  }
 
   const statGrid = el('div', 'report-overview-stats');
+  if (stats.length === 5) statGrid.classList.add('stats-5');
+  else if (stats.length >= 6) statGrid.classList.add('stats-6');
   for (const s of stats) {
     const item = el('div', 'report-overview-stat');
     const k = el('div', 'report-overview-key');
@@ -764,9 +947,9 @@ function renderReportGuide(parent: HTMLElement): void {
 
   const body = el('div', 'report-guide-body');
   body.innerHTML = `
-    <p><b>Goal:</b> find the openings that cost you the most points, then train those first.</p>
+    <p><b>Goal:</b> find the openings that cost you the most points, then train the weakest continuations first.</p>
     <ol>
-      <li>Start with <b>Priority Weaknesses</b> and sort by <b>Priority</b>.</li>
+      <li>Start with <b>Priority weaknesses</b> and highest <b>Priority</b>.</li>
       <li>Use <b>Preview</b> to inspect the line and continuations.</li>
       <li>Use <b>Line diagnostics</b> to spot critical drops and dangerous opponent replies.</li>
       <li>Use <b>Open in trainer</b> from board preview to continue training from that line.</li>
@@ -902,7 +1085,7 @@ function renderTheoryModal(parent: HTMLElement): void {
 
     <h3>How to use this in training</h3>
     <ol>
-      <li>Pick top 1-3 lines by Priority.</li>
+      <li>Pick top weak openings by Priority, then target their weakest continuation lines.</li>
       <li>Use Preview to inspect the branch and opponent continuations.</li>
       <li>Check Line diagnostics:
         <b>Critical move drops</b> show where your own move choice underperforms alternatives.
@@ -1123,6 +1306,356 @@ function renderTimeControlTable(parent: HTMLElement, stats: { timeClass: string;
     row.append(name, games, rate, bar);
     table.append(row);
   }
+
+  section.append(table);
+  parent.append(section);
+}
+
+// ── Family Sections ──
+
+function renderSideFamilySections(
+  parent: HTMLElement,
+  sideReport: SideFamilyReport,
+  sideLabel: 'White' | 'Black',
+): void {
+  const section = el('section', 'report-side-section');
+  const heading = el('div', 'report-section-title');
+  heading.textContent = `${sideLabel} openings`;
+  section.append(heading);
+
+  renderFamilyTable(section, sideReport.families);
+  parent.append(section);
+}
+
+function renderCombinedPriorityFamilies(parent: HTMLElement, report: ReportData): void {
+  const families = [
+    ...(report.whiteFamilyReport?.weakFamilies ?? []),
+    ...(report.blackFamilyReport?.weakFamilies ?? []),
+  ];
+  if (families.length === 0) return;
+
+  const dedup = new Map<string, OpeningFamily>();
+  for (const family of families) {
+    dedup.set(family.key, family);
+  }
+
+  const ranked = [...dedup.values()].sort((a, b) =>
+    b.impact - a.impact
+      || a.adjustedScorePct - b.adjustedScorePct
+      || b.wdl.total - a.wdl.total
+      || a.displayLabel.localeCompare(b.displayLabel),
+  );
+
+  renderFamilyCardSlot(
+    parent,
+    'Priority weaknesses',
+    ranked.slice(0, MAX_PRIORITY_FAMILY_CARDS),
+    'weak',
+  );
+}
+
+function renderFamilyCardSlot(
+  parent: HTMLElement,
+  title: string,
+  families: OpeningFamily[],
+  variant: 'weak' | 'best',
+): void {
+  const slot = el('div', 'report-family-slot');
+  const slotTitle = el('div', 'report-family-slot-title');
+  slotTitle.textContent = title;
+  slot.append(slotTitle);
+
+  const list = el('div', 'report-family-card-list');
+  for (const family of families) {
+    list.append(buildFamilyCard(family, variant));
+  }
+  slot.append(list);
+  parent.append(slot);
+}
+
+function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLElement {
+  const card = el('div', 'report-family-card');
+  card.classList.add(`variant-${variant}`);
+  card.classList.add(family.color === 'white' ? 'side-white' : 'side-black');
+  if (variant === 'weak') {
+    if (family.impact >= 3) card.classList.add('severity-high');
+    else if (family.impact >= 1.5) card.classList.add('severity-mid');
+    else card.classList.add('severity-low');
+  }
+
+  card.addEventListener('click', () => selectLine(family.baseLine));
+
+  const titleRow = el('div', 'report-line-title-row');
+  const labelWrap = el('div', 'report-family-title-wrap');
+  const label = el('div', 'report-family-label');
+  label.textContent = family.displayLabel;
+  labelWrap.append(label);
+
+  const gamesBadge = el('span', 'report-line-games-badge');
+  gamesBadge.textContent = `${formatNum(family.wdl.total)} games`;
+  gamesBadge.setAttribute('data-tooltip', 'Games in this opening base line.');
+  titleRow.append(labelWrap, gamesBadge);
+  card.append(titleRow);
+
+  const baseLine = el('div', 'report-family-base-line');
+  baseLine.textContent = family.baseLine.label || family.baseLine.displayLabel;
+  card.append(baseLine);
+
+  const stats = el('div', 'report-family-stats');
+  const priorityChip = document.createElement('span');
+  priorityChip.textContent = `Priority ${formatImpact(family.impact)}`;
+  if (family.impact >= 3) priorityChip.classList.add('chip-bad');
+  else if (family.impact >= 1.5) priorityChip.classList.add('chip-warn');
+  priorityChip.classList.add('tooltip-wide');
+  priorityChip.setAttribute(
+    'data-tooltip',
+    `Opening priority from aggregate score gap and frequency. Spread across continuations: ${family.continuationSpreadPct}%.`,
+  );
+
+  const winChip = document.createElement('span');
+  winChip.textContent = `Win ${family.winRate}%`;
+  if (family.winRate >= 55) winChip.classList.add('chip-good');
+  else if (family.winRate <= 45) winChip.classList.add('chip-bad');
+  winChip.setAttribute(
+    'data-tooltip',
+    `Opening record: ${family.wdl.wins}W ${family.wdl.draws}D ${family.wdl.losses}L (${family.wdl.total} games).`,
+  );
+  winChip.classList.add('tooltip-wide');
+
+  const deltaChip = document.createElement('span');
+  const familyElo = eloSwingForWdl(family.wdl);
+  deltaChip.textContent = `~Elo Δ${formatSignedNum(familyElo)}`;
+  if (familyElo > 0) deltaChip.classList.add('chip-good');
+  else if (familyElo < 0) deltaChip.classList.add('chip-bad');
+  deltaChip.classList.add('tooltip-wide');
+  deltaChip.setAttribute(
+    'data-tooltip',
+    `Simple family estimate: (wins - losses) * 8 = (${family.wdl.wins} - ${family.wdl.losses}) * 8.`,
+  );
+
+  const spreadChip = document.createElement('span');
+  spreadChip.textContent = `Spread ${family.continuationSpreadPct}%`;
+  if (family.continuationSpreadPct >= 10) spreadChip.classList.add('chip-warn');
+  spreadChip.classList.add('tooltip-wide');
+  spreadChip.setAttribute(
+    'data-tooltip',
+    'Continuation spread = max(continuation Score%) - min(continuation Score%) in this family.',
+  );
+
+  stats.append(priorityChip, winChip, deltaChip, spreadChip);
+  card.append(stats);
+
+  const snippets = el('div', 'report-family-snippets');
+  const weakSnippets = variant === 'weak'
+    ? family.topWeakContinuations.slice(0, 1)
+    : family.topWeakContinuations;
+  for (const line of weakSnippets) {
+    snippets.append(buildFamilySnippet(line, 'Weak continuation', 'weak'));
+  }
+  if (variant === 'best' && family.topStrongContinuation) {
+    const alreadyInWeak = family.topWeakContinuations.some(line =>
+      line.color === family.topStrongContinuation!.color && line.label === family.topStrongContinuation!.label
+    );
+    if (!alreadyInWeak) {
+      snippets.append(buildFamilySnippet(family.topStrongContinuation, 'Strong continuation', 'strong'));
+    }
+  }
+  if (snippets.childElementCount > 0) {
+    card.append(snippets);
+  }
+
+  return card;
+}
+
+function buildFamilySnippet(
+  line: OpeningLine,
+  label: string,
+  tone: 'weak' | 'strong',
+): HTMLElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = `report-family-snippet ${tone}`;
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectLine(line);
+  });
+
+  const left = el('div', 'report-family-snippet-left');
+  const kind = el('div', 'report-family-snippet-kind');
+  kind.textContent = label;
+  const moveLabel = el('div', 'report-family-snippet-line');
+  moveLabel.textContent = line.label || line.displayLabel;
+  left.append(kind, moveLabel);
+
+  const right = el('div', 'report-family-snippet-right');
+  const pri = document.createElement('span');
+  pri.textContent = `P ${formatImpact(line.impact)}`;
+  const win = document.createElement('span');
+  win.textContent = `W ${line.winRate}%`;
+  right.append(pri, win);
+
+  row.append(left, right);
+  return row;
+}
+
+function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void {
+  const section = el('div', 'report-family-table-section');
+  const table = el('div', 'report-family-table');
+  const header = el('div', 'report-family-table-header');
+  type FamilySortKey = 'opening' | 'impact' | 'winRate' | 'games';
+  type FamilySortDir = 'asc' | 'desc';
+  let sortKey: FamilySortKey = 'impact';
+  let sortDir: FamilySortDir = 'desc';
+
+  const hOpening = document.createElement('span');
+  hOpening.className = 'sortable';
+  hOpening.addEventListener('click', () => handleSort('opening'));
+  const hImpact = document.createElement('span');
+  hImpact.className = 'sortable';
+  hImpact.addEventListener('click', () => handleSort('impact'));
+  const hWin = document.createElement('span');
+  hWin.className = 'sortable';
+  hWin.addEventListener('click', () => handleSort('winRate'));
+  const hGames = document.createElement('span');
+  hGames.className = 'sortable';
+  hGames.addEventListener('click', () => handleSort('games'));
+  header.append(hOpening, hImpact, hWin, hGames);
+  table.append(header);
+
+  function sortValue(family: OpeningFamily, key: FamilySortKey): number | string {
+    if (key === 'opening') return family.displayLabel;
+    if (key === 'impact') return family.impact;
+    if (key === 'winRate') return family.winRate;
+    return family.wdl.total;
+  }
+
+  function sortFamilies(rows: OpeningFamily[]): OpeningFamily[] {
+    return [...rows].sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      let primary = 0;
+      if (typeof av === 'string' && typeof bv === 'string') {
+        primary = sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      } else {
+        const an = Number(av);
+        const bn = Number(bv);
+        primary = sortDir === 'asc' ? an - bn : bn - an;
+      }
+      if (primary !== 0) return primary;
+      return b.impact - a.impact
+        || a.adjustedScorePct - b.adjustedScorePct
+        || b.wdl.total - a.wdl.total
+        || a.displayLabel.localeCompare(b.displayLabel);
+    });
+  }
+
+  function renderRows(): void {
+    table.querySelectorAll('.report-family-row').forEach(r => r.remove());
+
+    for (const family of sortFamilies(families)) {
+      const details = document.createElement('details');
+      details.className = 'report-family-row';
+
+      const summary = document.createElement('summary');
+      summary.className = 'report-family-summary';
+      summary.addEventListener('click', () => {
+        selectLine(family.baseLine);
+      });
+      const familyName = document.createElement('span');
+      familyName.className = 'report-family-summary-name';
+      familyName.textContent = family.displayLabel;
+      const impact = document.createElement('span');
+      impact.textContent = formatImpact(family.impact);
+      const win = document.createElement('span');
+      win.textContent = `${family.winRate}%`;
+      const games = document.createElement('span');
+      games.textContent = formatNum(family.wdl.total);
+      summary.append(familyName, impact, win, games);
+      details.append(summary);
+
+      const list = el('div', 'report-family-cont-list');
+      const baseRow = document.createElement('button');
+      baseRow.type = 'button';
+      baseRow.className = 'report-family-cont-base';
+      baseRow.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectLine(family.baseLine);
+      });
+      const basePrefix = el('span', 'report-family-cont-base-prefix');
+      basePrefix.textContent = 'Base';
+      const baseLabel = el('span', 'report-family-cont-base-label');
+      baseLabel.textContent = family.baseLine.label || family.baseLine.displayLabel;
+      baseRow.append(basePrefix, baseLabel);
+      list.append(baseRow);
+
+      if (family.continuations.length === 0) {
+        const empty = el('div', 'report-family-cont-empty');
+        empty.textContent = 'No deeper continuations sampled yet.';
+        list.append(empty);
+      }
+
+      for (const line of family.continuations) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'report-family-cont-row';
+        row.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectLine(line);
+          lineViewIndex = Math.min(family.baseLine.ucis.length, lineFens.length - 1);
+          updateBoardForLine();
+        });
+
+        const label = el('div', 'report-family-cont-label');
+        label.textContent = line.label || line.displayLabel;
+        const stats = el('div', 'report-family-cont-stats');
+        const impactChip = document.createElement('span');
+        impactChip.textContent = `P ${formatImpact(line.impact)}`;
+        const winChip = document.createElement('span');
+        winChip.textContent = `W ${line.winRate}%`;
+        const gamesChip = document.createElement('span');
+        gamesChip.textContent = `${formatNum(line.wdl.total)}g`;
+        stats.append(impactChip, winChip, gamesChip);
+
+        row.append(label, stats);
+        list.append(row);
+      }
+
+      details.append(list);
+      table.append(details);
+    }
+  }
+
+  function handleSort(nextKey: FamilySortKey): void {
+    if (sortKey === nextKey) {
+      sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+      sortKey = nextKey;
+      sortDir = nextKey === 'opening' ? 'asc' : 'desc';
+    }
+    updateHeaderIndicators();
+    renderRows();
+  }
+
+  function indicatorLabel(label: string, key: FamilySortKey): string {
+    if (sortKey !== key) return label;
+    return `${label} ${sortDir === 'desc' ? '▼' : '▲'}`;
+  }
+
+  function updateHeaderIndicators(): void {
+    hOpening.textContent = indicatorLabel('Opening', 'opening');
+    hImpact.textContent = indicatorLabel('Priority', 'impact');
+    hWin.textContent = indicatorLabel('Win%', 'winRate');
+    hGames.textContent = indicatorLabel('Games', 'games');
+    hOpening.classList.toggle('sort-active', sortKey === 'opening');
+    hImpact.classList.toggle('sort-active', sortKey === 'impact');
+    hWin.classList.toggle('sort-active', sortKey === 'winRate');
+    hGames.classList.toggle('sort-active', sortKey === 'games');
+  }
+
+  updateHeaderIndicators();
+  renderRows();
 
   section.append(table);
   parent.append(section);
@@ -1563,7 +2096,7 @@ function renderLineDiagnostics(): void {
   title.textContent = 'Line diagnostics';
   container.append(title);
   const legend = el('div', 'report-line-diagnostics-legend');
-  legend.textContent = 'Score uses chess points (Win=1, Draw=0.5). Loss/100 estimates points lost per 100 games.';
+  legend.textContent = 'Score uses chess points (Win=1, Draw=0.5). Parent Loss/100 is per 100 visits to this position.';
   container.append(legend);
 
   if (!selectedLine) {
@@ -1643,6 +2176,14 @@ function renderLineDiagnostics(): void {
       selectedLine.vulnerabilityContext.moveSan,
     )}`;
     vulnSection.append(context);
+    if (selectedLine.vulnerabilityContext.isFallback) {
+      const fallback = el('div', 'report-line-diag-context report-line-diag-context-fallback');
+      fallback.textContent = `Sparse endpoint data; showing nearest earlier context after ${formatPlyMove(
+        selectedLine.vulnerabilityContext.actualPly,
+        selectedLine.vulnerabilityContext.moveSan,
+      )}.`;
+      vulnSection.append(fallback);
+    }
   }
 
   if (selectedLine.vulnerableResponses.length === 0) {
@@ -1682,10 +2223,10 @@ function renderLineDiagnostics(): void {
 
       const costChip = document.createElement('span');
       costChip.className = `report-line-diag-chip cost ${severityClass}`;
-      costChip.textContent = `Loss/100 ${formatPct(response.vulnerability * 100)}`;
+      costChip.textContent = `Parent Loss/100 ${formatPct(response.vulnerability * 100)}`;
       costChip.setAttribute(
         'data-tooltip',
-        'Estimated score points lost per 100 games from this reply: '
+        'Estimated score points lost per 100 visits to this parent position from this reply: '
           + '100 x [frequency x max(0, baseline score - score vs this reply)].',
       );
       costChip.classList.add('tooltip-wide');
@@ -1707,7 +2248,7 @@ function renderLineDiagnostics(): void {
 
 function previewVulnerableResponse(uci: string, san: string): void {
   if (!selectedLine || !selectedLine.vulnerabilityContext) return;
-  const contextPly = selectedLine.vulnerabilityContext.ply;
+  const contextPly = selectedLine.vulnerabilityContext.actualPly;
   if (contextPly < 0 || contextPly >= lineFens.length) return;
 
   lineViewIndex = contextPly;
@@ -1720,7 +2261,7 @@ type LineGameRow = {
   result: 'win' | 'draw' | 'loss';
   userRating: number;
   oppRating: number;
-  month: string;
+  date: string;
   opponent: string | null;
 };
 
@@ -1756,14 +2297,14 @@ function getLineGameRows(line: OpeningLine): LineGameRow[] {
       result: userResultForGame(g),
       userRating: g.ur,
       oppRating: g.or,
-      month: g.mo,
+      date: gameDateSortKey(g) ?? '',
       opponent: g.op ?? null,
     });
   }
   rows.sort((a, b) => {
-    if (!a.month || a.month === 'unknown') return 1;
-    if (!b.month || b.month === 'unknown') return -1;
-    return b.month.localeCompare(a.month);
+    if (!a.date || a.date === 'unknown') return 1;
+    if (!b.date || b.date === 'unknown') return -1;
+    return b.date.localeCompare(a.date);
   });
   return rows;
 }
@@ -1854,7 +2395,7 @@ function renderSelectedLineGames(): void {
       const or = row.oppRating > 0 ? ` (${row.oppRating})` : '';
       opp.textContent = `${oppName}${or}`;
       const month = el('div', 'report-line-game-month');
-      month.textContent = row.month || '';
+      month.textContent = row.date || '';
       const external = el('span', 'report-line-game-external');
       external.setAttribute('aria-hidden', 'true');
       external.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
@@ -1980,9 +2521,13 @@ function winRateTooltip(line: OpeningLine): string {
     + `Record: ${wins}W ${draws}D ${losses}L.`;
 }
 
-function eloSwingForLine(line: OpeningLine): number {
+function eloSwingForWdl(wdl: WDL): number {
   const ELO_PER_DECISIVE_GAME = 8;
-  return (line.wdl.wins - line.wdl.losses) * ELO_PER_DECISIVE_GAME;
+  return (wdl.wins - wdl.losses) * ELO_PER_DECISIVE_GAME;
+}
+
+function eloSwingForLine(line: OpeningLine): number {
+  return eloSwingForWdl(line.wdl);
 }
 
 function eloSwingTooltip(line: OpeningLine): string {

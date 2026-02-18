@@ -1593,22 +1593,33 @@ function renderPersonalFilterPanel(el: HTMLElement): void {
   }
 
   // Date range
-  if (stats.months.length > 1) {
+  if (stats.minDate && stats.maxDate) {
     const section = document.createElement('div');
     section.className = 'personal-filter-section';
     section.innerHTML = `<div class="personal-filter-label">Date range</div>`;
 
     // Quick presets
     const now = new Date();
-    const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const threeAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const threeMonth = `${threeAgo.getFullYear()}-${String(threeAgo.getMonth() + 1).padStart(2, '0')}`;
-    const yearStart = `${now.getFullYear()}-01`;
+    const toYmd = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const parseYmd = (ymd: string) => {
+      const [y, m, d] = ymd.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+    const todayYmd = toYmd(now);
+    const rangeEndYmd = stats.maxDate < todayYmd ? stats.maxDate : todayYmd;
+    const rangeEnd = parseYmd(rangeEndYmd);
+    const daysAgo = (n: number) => {
+      const d = new Date(rangeEnd);
+      d.setDate(rangeEnd.getDate() - n);
+      return toYmd(d);
+    };
 
-    const presets: { label: string; since: string; until: string }[] = [
-      { label: 'This month', since: curMonth, until: curMonth },
-      { label: 'Last 3 mo', since: threeMonth, until: curMonth },
-      { label: 'This year', since: yearStart, until: curMonth },
+    const presets: Array<{ label: string; since?: string; until?: string }> = [
+      { label: 'All', since: undefined, until: undefined },
+      { label: 'Last 7d', since: daysAgo(6), until: rangeEndYmd },
+      { label: 'Last 30d', since: daysAgo(29), until: rangeEndYmd },
+      { label: 'Last 90d', since: daysAgo(89), until: rangeEndYmd },
     ];
 
     const presetRow = document.createElement('div');
@@ -1616,17 +1627,29 @@ function renderPersonalFilterPanel(el: HTMLElement): void {
     for (const preset of presets) {
       const chip = document.createElement('button');
       chip.className = 'chip chip-sm';
-      if (filters.sinceMonth === preset.since && filters.untilMonth === preset.until) {
+      if ((filters.sinceDate ?? undefined) === preset.since && (filters.untilDate ?? undefined) === preset.until) {
         chip.classList.add('selected');
       }
       chip.textContent = preset.label;
       chip.addEventListener('click', () => {
         const current = getPersonalFilters();
         // Toggle off if already selected
-        if (current.sinceMonth === preset.since && current.untilMonth === preset.until) {
-          setPersonalFilters({ ...current, sinceMonth: undefined, untilMonth: undefined });
+        if ((current.sinceDate ?? undefined) === preset.since && (current.untilDate ?? undefined) === preset.until) {
+          setPersonalFilters({
+            ...current,
+            sinceDate: undefined,
+            untilDate: undefined,
+            sinceMonth: undefined,
+            untilMonth: undefined,
+          });
         } else {
-          setPersonalFilters({ ...current, sinceMonth: preset.since, untilMonth: preset.until });
+          setPersonalFilters({
+            ...current,
+            sinceDate: preset.since,
+            untilDate: preset.until,
+            sinceMonth: undefined,
+            untilMonth: undefined,
+          });
         }
         refreshPersonalMoves();
         // Rebuild filter panel to update preset + picker state
@@ -1642,21 +1665,29 @@ function renderPersonalFilterPanel(el: HTMLElement): void {
     const row = document.createElement('div');
     row.className = 'personal-filter-range';
 
-    const minMonth = stats.months[0];
-    const maxMonth = stats.months[stats.months.length - 1];
-    const applyDate = () => applyFiltersFromPanel(panel);
+    const sinceInput = document.createElement('input');
+    sinceInput.type = 'date';
+    sinceInput.className = 'filter-input';
+    sinceInput.id = 'filter-since-date';
+    sinceInput.min = stats.minDate;
+    sinceInput.max = stats.maxDate;
+    if (filters.sinceDate) sinceInput.value = filters.sinceDate;
 
-    const sincePicker = createMonthPicker(
-      'filter-since', filters.sinceMonth ?? '', minMonth, maxMonth, 'From…', applyDate,
-    );
+    const applyDate = () => applyFiltersFromPanel(panel);
+    sinceInput.addEventListener('change', applyDate);
     const sep = document.createElement('span');
     sep.className = 'filter-range-sep';
     sep.textContent = '–';
-    const untilPicker = createMonthPicker(
-      'filter-until', filters.untilMonth ?? '', minMonth, maxMonth, 'To…', applyDate,
-    );
+    const untilInput = document.createElement('input');
+    untilInput.type = 'date';
+    untilInput.className = 'filter-input';
+    untilInput.id = 'filter-until-date';
+    untilInput.min = stats.minDate;
+    untilInput.max = stats.maxDate;
+    if (filters.untilDate) untilInput.value = filters.untilDate;
+    untilInput.addEventListener('change', applyDate);
 
-    row.append(sincePicker, sep, untilPicker);
+    row.append(sinceInput, sep, untilInput);
     section.append(row);
     panel.append(section);
   }
@@ -1664,6 +1695,7 @@ function renderPersonalFilterPanel(el: HTMLElement): void {
   // Reset button (color is managed by the board-matching checkbox, not here)
   const hasActiveFilters = (filters.timeClasses && filters.timeClasses.length > 0) ||
     filters.minRating != null || filters.maxRating != null ||
+    filters.sinceDate || filters.untilDate ||
     filters.sinceMonth || filters.untilMonth;
   if (hasActiveFilters) {
     const resetBtn = document.createElement('button');
@@ -1708,13 +1740,21 @@ function applyFiltersFromPanel(panel: HTMLElement): void {
   const minRating = minEl?.value ? parseInt(minEl.value) : undefined;
   const maxRating = maxEl?.value ? parseInt(maxEl.value) : undefined;
 
-  // Collect date range (from custom month picker data attributes)
-  const sinceEl = panel.querySelector('#filter-since') as HTMLElement | null;
-  const untilEl = panel.querySelector('#filter-until') as HTMLElement | null;
-  const sinceMonth = sinceEl?.dataset.value || undefined;
-  const untilMonth = untilEl?.dataset.value || undefined;
+  // Collect date range
+  const sinceEl = panel.querySelector('#filter-since-date') as HTMLInputElement | null;
+  const untilEl = panel.querySelector('#filter-until-date') as HTMLInputElement | null;
+  const sinceDate = sinceEl?.value || undefined;
+  const untilDate = untilEl?.value || undefined;
 
-  setPersonalFilters({ timeClasses, minRating, maxRating, sinceMonth, untilMonth });
+  setPersonalFilters({
+    timeClasses,
+    minRating,
+    maxRating,
+    sinceDate,
+    untilDate,
+    sinceMonth: undefined,
+    untilMonth: undefined,
+  });
   refreshPersonalMoves();
 }
 
