@@ -33,8 +33,8 @@ import {
 } from './ui';
 import { renderHistoryTree, refreshHistoryTree, setSelectedFen, type LineEntry } from './history-tree';
 import { setTreeNavigateCallback } from './tree-ui';
-import { closeReportPage, setReportNavigateCallback } from './report-ui';
-import { setPersonalFilters } from './personal-explorer';
+import { closeReportPage, openReportPage, setReportNavigateCallback, shouldRestoreReportPage } from './report-ui';
+import { setPersonalFilters, isDBReady } from './personal-explorer';
 import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
 import { initEngine, evaluate, winningChance, formatScore, setMultiPV } from './engine';
@@ -322,6 +322,24 @@ function boot(): void {
   requestEval(STARTING_FEN);
 
   initMobileTabs();
+  restoreReportPageIfNeeded();
+}
+
+function restoreReportPageIfNeeded(): void {
+  if (!shouldRestoreReportPage()) return;
+
+  let attempts = 0;
+  const maxAttempts = 60; // ~3s at 50ms intervals
+  const tryOpen = () => {
+    if (isDBReady() || attempts >= maxAttempts) {
+      openReportPage();
+      return;
+    }
+    attempts++;
+    setTimeout(tryOpen, 50);
+  };
+
+  tryOpen();
 }
 
 boot();

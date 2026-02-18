@@ -584,7 +584,7 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
     renderOpeningTable(mainCol, 'Black Openings', report.blackOpenings);
   }
 
-  // Board sidebar (sticky)
+  // Board column (sticky) — board + nav + games
   const boardCol = el('div', 'report-board-col');
   body.append(boardCol);
 
@@ -620,9 +620,6 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   boardLabel.textContent = 'Click an opening to preview';
   boardCol.append(boardLabel);
 
-  const continuations = el('div', 'report-continuations');
-  boardCol.append(continuations);
-
   // Open in trainer button
   const trainerBtn = el('button', 'report-trainer-btn hidden') as HTMLButtonElement;
   trainerBtn.textContent = 'Open in trainer';
@@ -649,6 +646,22 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   const lineGames = el('div', 'report-line-games');
   boardCol.append(lineGames);
 
+  // Analysis column (sticky) — continuations + diagnostics
+  const analysisCol = el('div', 'report-analysis-col');
+  let analysisScrollTimer = 0;
+  analysisCol.addEventListener('scroll', () => {
+    analysisCol.classList.add('scrolling');
+    clearTimeout(analysisScrollTimer);
+    analysisScrollTimer = window.setTimeout(() => analysisCol.classList.remove('scrolling'), 1000);
+  }, { passive: true });
+  body.append(analysisCol);
+
+  const continuations = el('div', 'report-continuations');
+  analysisCol.append(continuations);
+
+  const diagnostics = el('div', 'report-line-diagnostics');
+  analysisCol.append(diagnostics);
+
   // Initialize mini board
   reportCg = Chessground(boardWrap, {
     viewOnly: true,
@@ -663,6 +676,7 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   lineFens = [];
   lineLastMoves = [];
   lineGameResultFilter = 'all';
+  renderLineDiagnostics();
   renderSelectedLineGames();
 }
 
@@ -754,6 +768,7 @@ function renderReportGuide(parent: HTMLElement): void {
     <ol>
       <li>Start with <b>Priority Weaknesses</b> and sort by <b>Priority</b>.</li>
       <li>Use <b>Preview</b> to inspect the line and continuations.</li>
+      <li>Use <b>Line diagnostics</b> to spot critical drops and dangerous opponent replies.</li>
       <li>Use <b>Open in trainer</b> from board preview to continue training from that line.</li>
       <li>Use <b>Win%</b> and <b>~Elo Δ</b> for quick performance read.</li>
       <li>Use tooltip basis details (gap, games, CI) to judge reliability.</li>
@@ -889,6 +904,10 @@ function renderTheoryModal(parent: HTMLElement): void {
     <ol>
       <li>Pick top 1-3 lines by Priority.</li>
       <li>Use Preview to inspect the branch and opponent continuations.</li>
+      <li>Check Line diagnostics:
+        <b>Critical move drops</b> show where your own move choice underperforms alternatives.
+        <b>Opponent response vulnerabilities</b> show replies that hurt often and below baseline.
+      </li>
       <li>Use Open in trainer from board preview to train from that line.</li>
       <li>After new games, re-check if Priority drops and Win% improves.</li>
     </ol>
@@ -1479,6 +1498,7 @@ function updateBoardForLine(): void {
 
   // Update continuations from this position
   renderContinuations(fen);
+  renderLineDiagnostics();
   renderSelectedLineGames();
 }
 
@@ -1532,6 +1552,167 @@ function renderContinuations(fen: string): void {
     row.append(san, games, rate, bar);
     container.append(row);
   }
+}
+
+function renderLineDiagnostics(): void {
+  const container = document.querySelector('.report-line-diagnostics');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const title = el('div', 'report-line-diagnostics-title');
+  title.textContent = 'Line diagnostics';
+  container.append(title);
+  const legend = el('div', 'report-line-diagnostics-legend');
+  legend.textContent = 'Score uses chess points (Win=1, Draw=0.5). Loss/100 estimates points lost per 100 games.';
+  container.append(legend);
+
+  if (!selectedLine) {
+    const empty = el('div', 'report-line-diagnostics-empty');
+    empty.textContent = 'Select an opening to see where it breaks down.';
+    container.append(empty);
+    return;
+  }
+
+  const criticalSection = el('div', 'report-line-diag-section');
+  const criticalTitle = el('div', 'report-line-diag-heading');
+  criticalTitle.textContent = 'Critical move drops';
+  criticalSection.append(criticalTitle);
+
+  if (selectedLine.criticalDrops.length === 0) {
+    const empty = el('div', 'report-line-diagnostics-empty');
+    empty.textContent = 'No major move drop detected at current sample size.';
+    criticalSection.append(empty);
+  } else {
+    const list = el('div', 'report-line-diag-list');
+    for (const drop of selectedLine.criticalDrops) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'report-line-diag-row critical';
+      row.addEventListener('click', () => {
+        lineViewIndex = Math.min(drop.ply, lineFens.length - 1);
+        updateBoardForLine();
+      });
+
+      const move = el('div', 'report-line-diag-move');
+      move.textContent = formatPlyMove(drop.ply, drop.moveSan);
+
+      const chips = el('div', 'report-line-diag-chips');
+
+      const dropChip = document.createElement('span');
+      dropChip.className = 'report-line-diag-chip bad';
+      dropChip.textContent = `Score\u0394 ${formatSignedPct(-drop.dropPct)}`;
+      dropChip.setAttribute(
+        'data-tooltip',
+        `This move scores ${formatPct(drop.childScorePct)}%, while alternatives from the parent `
+          + `average ${formatPct(drop.parentScorePct)}%.`,
+      );
+      dropChip.classList.add('tooltip-wide');
+
+      const scoreChip = document.createElement('span');
+      scoreChip.className = 'report-line-diag-chip';
+      scoreChip.textContent = `Score ${formatPct(drop.childScorePct)}%`;
+      scoreChip.setAttribute(
+        'data-tooltip',
+        'Your average score after this move (Win=1, Draw=0.5, Loss=0).',
+      );
+      scoreChip.classList.add('tooltip-wide');
+
+      const gamesChip = document.createElement('span');
+      gamesChip.className = 'report-line-diag-chip';
+      gamesChip.textContent = `${formatNum(drop.games)} games`;
+      gamesChip.setAttribute('data-tooltip', 'Number of games backing this estimate.');
+
+      chips.append(dropChip, scoreChip, gamesChip);
+      row.append(move, chips);
+      list.append(row);
+    }
+    criticalSection.append(list);
+  }
+
+  container.append(criticalSection);
+
+  const vulnSection = el('div', 'report-line-diag-section');
+  const vulnTitle = el('div', 'report-line-diag-heading');
+  vulnTitle.textContent = 'Opponent response vulnerabilities';
+  vulnSection.append(vulnTitle);
+
+  if (selectedLine.vulnerabilityContext?.moveSan) {
+    const context = el('div', 'report-line-diag-context');
+    context.textContent = `After ${formatPlyMove(
+      selectedLine.vulnerabilityContext.ply,
+      selectedLine.vulnerabilityContext.moveSan,
+    )}`;
+    vulnSection.append(context);
+  }
+
+  if (selectedLine.vulnerableResponses.length === 0) {
+    const empty = el('div', 'report-line-diagnostics-empty');
+    empty.textContent = 'No vulnerable opponent reply stands out in this line.';
+    vulnSection.append(empty);
+  } else {
+    const list = el('div', 'report-line-diag-list');
+    for (const response of selectedLine.vulnerableResponses) {
+      const severityClass = vulnerabilitySeverityClass(response.vulnerability);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = `report-line-diag-row ${severityClass}`;
+      row.addEventListener('click', () => previewVulnerableResponse(response.moveUci, response.moveSan));
+
+      const move = el('div', 'report-line-diag-move');
+      move.textContent = response.moveSan;
+
+      const chips = el('div', 'report-line-diag-chips');
+      const freqChip = document.createElement('span');
+      freqChip.className = 'report-line-diag-chip';
+      freqChip.textContent = `${response.frequencyPct}% freq`;
+      freqChip.setAttribute(
+        'data-tooltip',
+        'How often opponents choose this reply from the shown position.',
+      );
+      freqChip.classList.add('tooltip-wide');
+
+      const scoreChip = document.createElement('span');
+      scoreChip.className = 'report-line-diag-chip';
+      scoreChip.textContent = `Score ${response.scorePct}%`;
+      scoreChip.setAttribute(
+        'data-tooltip',
+        'Your average score after this opponent reply (Win=1, Draw=0.5, Loss=0).',
+      );
+      scoreChip.classList.add('tooltip-wide');
+
+      const costChip = document.createElement('span');
+      costChip.className = `report-line-diag-chip cost ${severityClass}`;
+      costChip.textContent = `Loss/100 ${formatPct(response.vulnerability * 100)}`;
+      costChip.setAttribute(
+        'data-tooltip',
+        'Estimated score points lost per 100 games from this reply: '
+          + '100 x [frequency x max(0, baseline score - score vs this reply)].',
+      );
+      costChip.classList.add('tooltip-wide');
+
+      const gamesChip = document.createElement('span');
+      gamesChip.className = 'report-line-diag-chip';
+      gamesChip.textContent = `${formatNum(response.games)} games`;
+      gamesChip.setAttribute('data-tooltip', 'Number of games for this reply.');
+
+      chips.append(costChip, freqChip, scoreChip, gamesChip);
+      row.append(move, chips);
+      list.append(row);
+    }
+    vulnSection.append(list);
+  }
+
+  container.append(vulnSection);
+}
+
+function previewVulnerableResponse(uci: string, san: string): void {
+  if (!selectedLine || !selectedLine.vulnerabilityContext) return;
+  const contextPly = selectedLine.vulnerabilityContext.ply;
+  if (contextPly < 0 || contextPly >= lineFens.length) return;
+
+  lineViewIndex = contextPly;
+  updateBoardForLine();
+  extendLine(uci, san);
 }
 
 type LineGameRow = {
@@ -1641,6 +1822,12 @@ function renderSelectedLineGames(): void {
   container.append(filterRow);
 
   const list = el('div', 'report-line-games-list');
+  let scrollTimer = 0;
+  list.addEventListener('scroll', () => {
+    list.classList.add('scrolling');
+    clearTimeout(scrollTimer);
+    scrollTimer = window.setTimeout(() => list.classList.remove('scrolling'), 1000);
+  }, { passive: true });
   const shown = lineGameResultFilter === 'all'
     ? rows
     : rows.filter(r => r.result === lineGameResultFilter);
@@ -1663,20 +1850,16 @@ function renderSelectedLineGames(): void {
 
       const meta = el('div', 'report-line-game-meta');
       const opp = el('div', 'report-line-game-opp');
-      opp.textContent = row.opponent ? row.opponent : 'Game';
-      const subMeta = el('div', 'report-line-game-submeta');
+      const oppName = row.opponent ? row.opponent : 'Game';
+      const or = row.oppRating > 0 ? ` (${row.oppRating})` : '';
+      opp.textContent = `${oppName}${or}`;
       const month = el('div', 'report-line-game-month');
       month.textContent = row.month || '';
-
-      const ratings = el('span', 'report-line-game-rating');
-      const or = row.oppRating > 0 ? row.oppRating : '—';
-      ratings.textContent = `Opp ${or}`;
       const external = el('span', 'report-line-game-external');
       external.setAttribute('aria-hidden', 'true');
       external.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
 
-      subMeta.append(month, ratings);
-      meta.append(opp, subMeta);
+      meta.append(opp, month);
 
       link.append(result, meta, external);
       list.append(link);
@@ -1737,6 +1920,23 @@ function formatNum(n: number): string {
   return n.toString();
 }
 
+function formatPct(n: number): string {
+  const rounded = Math.round(n * 10) / 10;
+  return Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1);
+}
+
+function formatSignedPct(n: number): string {
+  const abs = Math.abs(n);
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  return `${sign}${formatPct(abs)}%`;
+}
+
+function formatPlyMove(ply: number, san: string): string {
+  const moveNo = Math.floor((ply + 1) / 2);
+  if (ply % 2 === 1) return `${moveNo}. ${san}`;
+  return `${moveNo}... ${san}`;
+}
+
 function formatSignedNum(n: number | null): string {
   if (n == null) return '—';
   return `${n > 0 ? '+' : ''}${n}`;
@@ -1744,6 +1944,15 @@ function formatSignedNum(n: number | null): string {
 
 function formatImpact(n: number): string {
   return n.toFixed(2).replace(/\.00$/, '');
+}
+
+function vulnerabilitySeverityClass(
+  vulnerability: number,
+): 'severity-high' | 'severity-mid' | 'severity-low' {
+  const lossPer100 = vulnerability * 100;
+  if (lossPer100 >= 4) return 'severity-high';
+  if (lossPer100 >= 2) return 'severity-mid';
+  return 'severity-low';
 }
 
 function priorityScaleTooltip(): string {

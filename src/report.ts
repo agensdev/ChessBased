@@ -1,6 +1,6 @@
 import { sortTimeClasses } from './personal-explorer';
 import type { GameMeta } from './personal-explorer';
-import type { ExplorerResponse } from './types';
+import type { ExplorerMove, ExplorerResponse } from './types';
 import { Chess } from 'chessops/chess';
 import { makeFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
@@ -14,6 +14,30 @@ export interface WDL {
   draws: number;
   losses: number;
   total: number;
+}
+
+export interface CriticalMoveDrop {
+  ply: number; // 1-based ply in the line
+  moveSan: string;
+  moveUci: string;
+  parentScorePct: number;
+  childScorePct: number;
+  dropPct: number;
+  games: number;
+}
+
+export interface VulnerableResponse {
+  moveSan: string;
+  moveUci: string;
+  games: number;
+  frequencyPct: number;
+  scorePct: number;
+  vulnerability: number;
+}
+
+export interface VulnerabilityContext {
+  ply: number; // 1-based ply of the user move after which responses are measured
+  moveSan: string;
 }
 
 export interface OpeningLine {
@@ -39,6 +63,9 @@ export interface OpeningLine {
     draws: string[];
     all: string[];
   };
+  criticalDrops: CriticalMoveDrop[];
+  vulnerabilityContext: VulnerabilityContext | null;
+  vulnerableResponses: VulnerableResponse[];
 }
 
 export interface MonthlyRating {
@@ -116,6 +143,11 @@ const MIN_GAMES_FOR_LINE = 5;
 const MIN_DEPTH = 2;  // at least 1 move per side
 const MAX_DEPTH = 8;  // 4 moves per side
 const PRIOR_WEIGHT = 12;
+const MIN_GAMES_FOR_CRITICAL_DROP = 5;
+const MIN_DROP_PCT = 4;
+const MAX_CRITICAL_DROPS = 3;
+const MIN_GAMES_FOR_VULNERABLE_RESPONSE = 3;
+const MAX_VULNERABLE_RESPONSES = 5;
 
 function walkOpenings(
   isWhite: boolean,
@@ -251,6 +283,9 @@ function walkOpenings(
       deltaVsExpectedPct: null,
       impact: 0,
       exampleLinks: { wins: [], losses: [], draws: [], all: [] },
+      criticalDrops: [],
+      vulnerabilityContext: null,
+      vulnerableResponses: [],
     });
   }
 
@@ -289,6 +324,166 @@ function confidenceFromGames(total: number): 'high' | 'medium' | 'low' {
 function expectedScore(userRating: number, oppRating: number): number | null {
   if (userRating <= 0 || oppRating <= 0) return null;
   return 1 / (1 + Math.pow(10, (oppRating - userRating) / 400));
+}
+
+function moveTotal(move: ExplorerMove): number {
+  return move.white + move.draws + move.black;
+}
+
+function moveScoreRate(move: ExplorerMove, isWhite: boolean): number {
+  const total = moveTotal(move);
+  if (total === 0) return 0;
+  const wins = isWhite ? move.white : move.black;
+  return (wins + move.draws * 0.5) / total;
+}
+
+function aggregateScoreRate(data: ExplorerResponse, isWhite: boolean): number | null {
+  let points = 0;
+  let total = 0;
+
+  for (const move of data.moves) {
+    const games = moveTotal(move);
+    if (games === 0) continue;
+    const wins = isWhite ? move.white : move.black;
+    points += wins + move.draws * 0.5;
+    total += games;
+  }
+
+  if (total === 0) return null;
+  return points / total;
+}
+
+function isUserMoveIndex(color: 'white' | 'black', moveIdx: number): boolean {
+  return color === 'white' ? moveIdx % 2 === 0 : moveIdx % 2 === 1;
+}
+
+function buildLineFens(ucis: string[]): string[] | null {
+  const chess = Chess.default();
+  const fens = [makeFen(chess.toSetup())];
+
+  for (const uci of ucis) {
+    const move = parseUci(uci);
+    if (!move) return null;
+    chess.play(move);
+    fens.push(makeFen(chess.toSetup()));
+  }
+
+  return fens;
+}
+
+function computeCriticalDrops(line: OpeningLine, queryFn: QueryFn): CriticalMoveDrop[] {
+  if (line.ucis.length === 0) return [];
+  const fens = buildLineFens(line.ucis);
+  if (!fens) return [];
+
+  const isWhite = line.color === 'white';
+  const drops: CriticalMoveDrop[] = [];
+
+  for (let i = 0; i < line.ucis.length; i++) {
+    if (!isUserMoveIndex(line.color, i)) continue;
+
+    const parentFen = fens[i];
+    const data = queryFn(parentFen);
+    if (!data || data.moves.length === 0) continue;
+
+    const selected = data.moves.find(m => m.uci === line.ucis[i]);
+    if (!selected) continue;
+
+    const selectedGames = moveTotal(selected);
+    if (selectedGames < MIN_GAMES_FOR_CRITICAL_DROP) continue;
+
+    const parentScore = aggregateScoreRate(data, isWhite);
+    if (parentScore == null) continue;
+
+    const childScore = moveScoreRate(selected, isWhite);
+    const drop = parentScore - childScore;
+    const dropPct = Math.round(drop * 1000) / 10;
+    if (dropPct < MIN_DROP_PCT) continue;
+
+    drops.push({
+      ply: i + 1,
+      moveSan: line.moves[i] ?? selected.san,
+      moveUci: line.ucis[i],
+      parentScorePct: Math.round(parentScore * 1000) / 10,
+      childScorePct: Math.round(childScore * 1000) / 10,
+      dropPct,
+      games: selectedGames,
+    });
+  }
+
+  drops.sort((a, b) => b.dropPct - a.dropPct || b.games - a.games || a.ply - b.ply);
+  return drops.slice(0, MAX_CRITICAL_DROPS);
+}
+
+function computeVulnerableResponses(
+  line: OpeningLine,
+  globalScore: number,
+  queryFn: QueryFn,
+): { context: VulnerabilityContext | null; responses: VulnerableResponse[] } {
+  if (line.ucis.length === 0) return { context: null, responses: [] };
+  const fens = buildLineFens(line.ucis);
+  if (!fens) return { context: null, responses: [] };
+
+  let contextMoveIdx = -1;
+  for (let i = 0; i < line.ucis.length; i++) {
+    if (isUserMoveIndex(line.color, i)) contextMoveIdx = i;
+  }
+  if (contextMoveIdx < 0) return { context: null, responses: [] };
+
+  const contextPly = contextMoveIdx + 1;
+  const contextFen = fens[contextPly];
+  const data = queryFn(contextFen);
+  if (!data || data.moves.length === 0) {
+    return {
+      context: {
+        ply: contextPly,
+        moveSan: line.moves[contextMoveIdx] ?? '',
+      },
+      responses: [],
+    };
+  }
+
+  const isWhite = line.color === 'white';
+  const nodeGames = data.moves.reduce((sum, move) => sum + moveTotal(move), 0);
+  if (nodeGames === 0) {
+    return {
+      context: {
+        ply: contextPly,
+        moveSan: line.moves[contextMoveIdx] ?? '',
+      },
+      responses: [],
+    };
+  }
+
+  const rows: VulnerableResponse[] = [];
+  for (const move of data.moves) {
+    const games = moveTotal(move);
+    if (games < MIN_GAMES_FOR_VULNERABLE_RESPONSE) continue;
+
+    const score = moveScoreRate(move, isWhite);
+    const freq = games / nodeGames;
+    const vulnerability = freq * Math.max(0, globalScore - score);
+    if (vulnerability <= 0) continue;
+
+    rows.push({
+      moveSan: move.san,
+      moveUci: move.uci,
+      games,
+      frequencyPct: Math.round(freq * 100),
+      scorePct: Math.round(score * 100),
+      vulnerability: Math.round(vulnerability * 10000) / 10000,
+    });
+  }
+
+  rows.sort((a, b) => b.vulnerability - a.vulnerability || b.games - a.games);
+
+  return {
+    context: {
+      ply: contextPly,
+      moveSan: line.moves[contextMoveIdx] ?? '',
+    },
+    responses: rows.slice(0, MAX_VULNERABLE_RESPONSES),
+  };
 }
 
 function getParentFenAndLastUci(ucis: string[]): { fen: string; uci: string } | null {
@@ -390,6 +585,7 @@ function thirdStickout(
 function enrichOpeningLines(
   lines: OpeningLine[],
   globalScore: number,
+  queryFn: QueryFn,
   moveGameIndicesFn?: MoveGameIndicesFn,
   gameByIndexFn?: GameByIndexFn,
 ): void {
@@ -404,6 +600,10 @@ function enrichOpeningLines(
     line.scoreCiPct = Math.round(ci * 1000) / 10;
     line.confidence = confidenceFromGames(total);
     line.impact = Math.round(Math.max(0, globalScore - adj) * total * 100) / 100;
+    line.criticalDrops = computeCriticalDrops(line, queryFn);
+    const vulnerability = computeVulnerableResponses(line, globalScore, queryFn);
+    line.vulnerabilityContext = vulnerability.context;
+    line.vulnerableResponses = vulnerability.responses;
 
     if (!moveGameIndicesFn || !gameByIndexFn || line.ucis.length === 0) continue;
     const parent = getParentFenAndLastUci(line.ucis);
@@ -502,13 +702,13 @@ export function generateReport(
   if (sideFilter !== 'black') {
     syncColorFilter?.('white');
     whiteOpenings = walkOpenings(true, queryFn);
-    enrichOpeningLines(whiteOpenings, globalScore, moveGameIndicesFn, gameByIndexFn);
+    enrichOpeningLines(whiteOpenings, globalScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 
   if (sideFilter !== 'white') {
     syncColorFilter?.('black');
     blackOpenings = walkOpenings(false, queryFn);
-    enrichOpeningLines(blackOpenings, globalScore, moveGameIndicesFn, gameByIndexFn);
+    enrichOpeningLines(blackOpenings, globalScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 
   syncColorFilter?.(null);

@@ -341,6 +341,24 @@ export function queryPersonalExplorer(fen: string): ExplorerResponse | null {
   return { moves: explorerMoves };
 }
 
+/**
+ * Return filtered game indices for a specific move at a position.
+ * Indices refer to personalDB.games.
+ */
+export function queryPersonalMoveGameIndices(fen: string, uci: string): number[] {
+  if (!personalDB) return [];
+  const key = positionKey(fen);
+  const indices = personalDB.positions[key]?.[uci];
+  if (!indices || indices.length === 0) return [];
+
+  const dedup = new Set<number>();
+  for (const idx of indices) {
+    if (filteredGameSet && !filteredGameSet.has(idx)) continue;
+    dedup.add(idx);
+  }
+  return [...dedup];
+}
+
 // ── PGN Processing ──
 
 type GameResult = 'w' | 'd' | 'b';
