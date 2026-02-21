@@ -16,33 +16,6 @@ export interface WDL {
   total: number;
 }
 
-export interface CriticalMoveDrop {
-  ply: number; // 1-based ply in the line
-  moveSan: string;
-  moveUci: string;
-  parentScorePct: number;
-  childScorePct: number;
-  dropPct: number;
-  games: number;
-}
-
-export interface VulnerableResponse {
-  moveSan: string;
-  moveUci: string;
-  games: number;
-  frequencyPct: number;
-  scorePct: number;
-  vulnerability: number;
-}
-
-export interface VulnerabilityContext {
-  ply: number; // 1-based ply of the user move after which responses are measured
-  moveSan: string;
-  isFallback: boolean;
-  requestedPly: number;
-  actualPly: number;
-}
-
 export interface OpeningLine {
   label: string;
   displayLabel: string;
@@ -66,9 +39,6 @@ export interface OpeningLine {
     draws: string[];
     all: string[];
   };
-  criticalDrops: CriticalMoveDrop[];
-  vulnerabilityContext: VulnerabilityContext | null;
-  vulnerableResponses: VulnerableResponse[];
 }
 
 export interface OpeningFamily {
@@ -178,11 +148,6 @@ const BASE_MAX_PLY = 8;
 const ADAPTIVE_MAX_PLY = 10;
 const ADAPTIVE_MIN_NODE_GAMES = 20;
 const PRIOR_WEIGHT = 12;
-const MIN_GAMES_FOR_CRITICAL_DROP = 5;
-const MIN_DROP_PCT = 4;
-const MAX_CRITICAL_DROPS = 3;
-const MIN_GAMES_FOR_VULNERABLE_RESPONSE = 3;
-const MAX_VULNERABLE_RESPONSES = 5;
 const MAX_WEAK_FAMILIES = 5;
 const MAX_BEST_FAMILIES = 3;
 const MAX_WEAK_CONTINUATION_SNIPPETS = 2;
@@ -353,9 +318,6 @@ function makeOpeningLine(
     deltaVsExpectedPct: null,
     impact: 0,
     exampleLinks: { wins: [], losses: [], draws: [], all: [] },
-    criticalDrops: [],
-    vulnerabilityContext: null,
-    vulnerableResponses: [],
   };
 }
 
@@ -480,131 +442,6 @@ function buildLineFens(ucis: string[]): string[] | null {
   }
 
   return fens;
-}
-
-function computeCriticalDrops(line: OpeningLine, queryFn: QueryFn): CriticalMoveDrop[] {
-  if (line.ucis.length === 0) return [];
-  const fens = buildLineFens(line.ucis);
-  if (!fens) return [];
-
-  const isWhite = line.color === 'white';
-  const drops: CriticalMoveDrop[] = [];
-
-  for (let i = 0; i < line.ucis.length; i++) {
-    if (!isUserMoveIndex(line.color, i)) continue;
-
-    const parentFen = fens[i];
-    const data = queryFn(parentFen);
-    if (!data || data.moves.length === 0) continue;
-
-    const selected = data.moves.find(m => m.uci === line.ucis[i]);
-    if (!selected) continue;
-
-    const selectedGames = moveTotal(selected);
-    if (selectedGames < MIN_GAMES_FOR_CRITICAL_DROP) continue;
-
-    const parentScore = aggregateScoreRate(data, isWhite);
-    if (parentScore == null) continue;
-
-    const childScore = moveScoreRate(selected, isWhite);
-    const drop = parentScore - childScore;
-    const dropPct = Math.round(drop * 1000) / 10;
-    if (dropPct < MIN_DROP_PCT) continue;
-
-    drops.push({
-      ply: i + 1,
-      moveSan: line.moves[i] ?? selected.san,
-      moveUci: line.ucis[i],
-      parentScorePct: Math.round(parentScore * 1000) / 10,
-      childScorePct: Math.round(childScore * 1000) / 10,
-      dropPct,
-      games: selectedGames,
-    });
-  }
-
-  drops.sort((a, b) => b.dropPct - a.dropPct || b.games - a.games || a.ply - b.ply);
-  return drops.slice(0, MAX_CRITICAL_DROPS);
-}
-
-function computeVulnerableResponses(
-  line: OpeningLine,
-  globalScore: number,
-  queryFn: QueryFn,
-): { context: VulnerabilityContext | null; responses: VulnerableResponse[] } {
-  if (line.ucis.length === 0) return { context: null, responses: [] };
-  const fens = buildLineFens(line.ucis);
-  if (!fens) return { context: null, responses: [] };
-
-  let deepestUserMoveIdx = -1;
-  for (let i = 0; i < line.ucis.length; i++) {
-    if (isUserMoveIndex(line.color, i)) deepestUserMoveIdx = i;
-  }
-  if (deepestUserMoveIdx < 0) return { context: null, responses: [] };
-
-  const requestedPly = deepestUserMoveIdx + 1;
-  const isWhite = line.color === 'white';
-
-  let selectedMoveIdx = deepestUserMoveIdx;
-  let selectedData: ExplorerResponse | null = null;
-
-  for (let i = deepestUserMoveIdx; i >= 0; i--) {
-    if (!isUserMoveIndex(line.color, i)) continue;
-    const contextPly = i + 1;
-    const data = queryFn(fens[contextPly]);
-    if (!data || data.moves.length === 0) continue;
-    const hasEligibleReply = data.moves.some(move => moveTotal(move) >= MIN_GAMES_FOR_VULNERABLE_RESPONSE);
-    if (!hasEligibleReply) continue;
-    selectedMoveIdx = i;
-    selectedData = data;
-    break;
-  }
-
-  const context: VulnerabilityContext = {
-    ply: selectedMoveIdx + 1,
-    moveSan: line.moves[selectedMoveIdx] ?? '',
-    isFallback: selectedMoveIdx !== deepestUserMoveIdx,
-    requestedPly,
-    actualPly: selectedMoveIdx + 1,
-  };
-
-  if (!selectedData) {
-    return {
-      context: {
-        ply: requestedPly,
-        moveSan: line.moves[deepestUserMoveIdx] ?? '',
-        isFallback: false,
-        requestedPly,
-        actualPly: requestedPly,
-      },
-      responses: [],
-    };
-  }
-
-  const nodeGames = selectedData.moves.reduce((sum, move) => sum + moveTotal(move), 0);
-  if (nodeGames === 0) return { context, responses: [] };
-
-  const rows: VulnerableResponse[] = [];
-  for (const move of selectedData.moves) {
-    const games = moveTotal(move);
-    if (games < MIN_GAMES_FOR_VULNERABLE_RESPONSE) continue;
-
-    const score = moveScoreRate(move, isWhite);
-    const freq = games / nodeGames;
-    const vulnerability = freq * Math.max(0, globalScore - score);
-    if (vulnerability <= 0) continue;
-
-    rows.push({
-      moveSan: move.san,
-      moveUci: move.uci,
-      games,
-      frequencyPct: Math.round(freq * 100),
-      scorePct: Math.round(score * 100),
-      vulnerability: Math.round(vulnerability * 10000) / 10000,
-    });
-  }
-
-  rows.sort((a, b) => b.vulnerability - a.vulnerability || b.games - a.games);
-  return { context, responses: rows.slice(0, MAX_VULNERABLE_RESPONSES) };
 }
 
 function getParentFenAndLastUci(ucis: string[]): { fen: string; uci: string } | null {
@@ -866,10 +703,6 @@ function enrichOpeningLines(
     line.scoreCiPct = Math.round(ci * 1000) / 10;
     line.confidence = confidenceFromGames(total);
     line.impact = Math.round(Math.max(0, globalScore - adj) * total * 100) / 100;
-    line.criticalDrops = computeCriticalDrops(line, queryFn);
-    const vulnerability = computeVulnerableResponses(line, globalScore, queryFn);
-    line.vulnerabilityContext = vulnerability.context;
-    line.vulnerableResponses = vulnerability.responses;
 
     if (!moveGameIndicesFn || !gameByIndexFn || line.ucis.length === 0) continue;
     const parent = getParentFenAndLastUci(line.ucis);

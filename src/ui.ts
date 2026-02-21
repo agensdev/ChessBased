@@ -2347,6 +2347,21 @@ function initPersonalImportModal(): void {
     chip.addEventListener('click', () => chip.classList.toggle('selected'));
   });
 
+  // Chess.com month range: chips + custom input
+  const monthsInput = document.getElementById('personal-months-input') as HTMLInputElement;
+  document.querySelectorAll('#personal-chesscom-filters .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('#personal-chesscom-filters .chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      monthsInput.value = '';
+    });
+  });
+  monthsInput.addEventListener('input', () => {
+    if (monthsInput.value.trim()) {
+      document.querySelectorAll('#personal-chesscom-filters .chip').forEach(c => c.classList.remove('selected'));
+    }
+  });
+
   document.getElementById('personal-import-btn')!.addEventListener('click', doPersonalImport);
   document.getElementById('personal-import-cancel')!.addEventListener('click', () => {
     importAbortController?.abort();
@@ -2357,6 +2372,17 @@ function initPersonalImportModal(): void {
   });
 }
 
+function getSelectedMaxMonths(): number | undefined {
+  const customVal = (document.getElementById('personal-months-input') as HTMLInputElement).value.trim();
+  if (customVal) {
+    const parsed = parseInt(customVal, 10);
+    if (parsed > 0) return parsed;
+  }
+  const selectedChip = document.querySelector('#personal-chesscom-filters .chip.selected') as HTMLElement | null;
+  const chipVal = selectedChip ? parseInt(selectedChip.dataset.months ?? '0', 10) : 0;
+  return chipVal > 0 ? chipVal : undefined;
+}
+
 function getSelectedSpeeds(): string[] {
   const chips = document.querySelectorAll('#personal-filters .chip.selected');
   return Array.from(chips).map(c => (c as HTMLElement).dataset.speed!);
@@ -2364,14 +2390,10 @@ function getSelectedSpeeds(): string[] {
 
 function updateImportFiltersVisibility(): void {
   const filtersEl = document.getElementById('personal-filters')!;
-  const noticeEl = document.getElementById('personal-chesscom-notice')!;
-  if (selectedPlatform === 'lichess') {
-    filtersEl.classList.remove('hidden');
-    noticeEl.classList.add('hidden');
-  } else {
-    filtersEl.classList.add('hidden');
-    noticeEl.classList.remove('hidden');
-  }
+  const chesscomFilters = document.getElementById('personal-chesscom-filters')!;
+  // Speed filters only for Lichess; month range always visible
+  filtersEl.classList.toggle('hidden', selectedPlatform !== 'lichess');
+  chesscomFilters.classList.remove('hidden');
 }
 
 function openPersonalImportModal(): void {
@@ -2443,15 +2465,21 @@ async function doPersonalImport(): Promise<void> {
 
   try {
     let total: number;
+    const maxMonths = getSelectedMaxMonths();
     if (selectedPlatform === 'lichess') {
       const speeds = getSelectedSpeeds();
       const filters: LichessFilters = {};
       if (speeds.length > 0 && speeds.length < 4) {
         filters.perfType = speeds;
       }
+      if (maxMonths) {
+        const since = new Date();
+        since.setMonth(since.getMonth() - maxMonths);
+        filters.since = since.getTime();
+      }
       total = await importFromLichess(username, onProgress, importAbortController.signal, filters);
     } else {
-      total = await importFromChesscom(username, onProgress, importAbortController.signal);
+      total = await importFromChesscom(username, onProgress, importAbortController.signal, maxMonths);
     }
 
     progressFill.classList.remove('indeterminate');

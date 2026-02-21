@@ -19,6 +19,7 @@ import {
   type WDL,
 } from './report';
 import { loadConfig } from './config';
+import { isMoveLocked } from './repertoire';
 import type { MoveHistoryEntry } from './types';
 
 type ReportNavigateCallback = (
@@ -44,6 +45,18 @@ let reportRefreshInProgress = false;
 const REPORT_OPEN_SESSION_KEY = 'chessbased-report-open';
 const REPORT_GUIDE_OPEN_KEY = 'chessbased-report-guide-open';
 const CURRENT_RATING_WINDOW = 100;
+const CURRENT_RATING_RANGE = CURRENT_RATING_WINDOW * 2;
+
+function currentRatingBounds(rating: number): { min: number; max: number } {
+  const stats = getPersonalStats();
+  const floor = stats?.minRating ?? 0;
+  const ceil = stats?.maxRating ?? 3000;
+  let min = rating - CURRENT_RATING_WINDOW;
+  let max = rating + CURRENT_RATING_WINDOW;
+  if (max > ceil) { max = ceil; min = ceil - CURRENT_RATING_RANGE; }
+  if (min < floor) { min = floor; max = floor + CURRENT_RATING_RANGE; }
+  return { min, max };
+}
 
 // Line navigation state
 let selectedLine: OpeningLine | null = null;
@@ -148,8 +161,8 @@ export async function openReportPage(): Promise<void> {
     ?? inferCurrentRating(getPersonalGames() ?? [], appConfig.speeds, explorerConfig);
   reportFilters = {
     timeClasses: [...appConfig.speeds],
-    minRating: reportCurrentRating != null ? reportCurrentRating - CURRENT_RATING_WINDOW : undefined,
-    maxRating: reportCurrentRating != null ? reportCurrentRating + CURRENT_RATING_WINDOW : undefined,
+    minRating: reportCurrentRating != null ? currentRatingBounds(reportCurrentRating).min : undefined,
+    maxRating: reportCurrentRating != null ? currentRatingBounds(reportCurrentRating).max : undefined,
   };
 
   document.getElementById('app')!.style.display = 'none';
@@ -178,11 +191,97 @@ function renderEmptyState(page: HTMLElement): void {
     <div class="report-content">
       <div class="report-empty">
         <p>No games imported yet.</p>
-        <p>Import your games from the <b>My Games</b> tab to see your report.</p>
+        <p>Import your games to generate a report of your openings.</p>
+        <div class="report-import-form">
+          <div class="report-import-platform">
+            <button class="segment-btn selected" data-platform="lichess">Lichess</button>
+            <button class="segment-btn" data-platform="chesscom">Chess.com</button>
+          </div>
+          <div class="report-import-row">
+            <input id="report-import-username" type="text" placeholder="Chess username" autocomplete="off" data-1p-ignore class="report-import-input" />
+            <button id="report-import-btn" class="btn btn-primary">Import</button>
+          </div>
+          <div id="report-import-months" class="report-import-months hidden">
+            <span class="personal-range-text">Last</span>
+            <input id="report-months-input" type="number" min="1" max="999" placeholder="All" class="personal-months-input" />
+            <span class="personal-range-text">months</span>
+          </div>
+          <div id="report-import-progress" class="report-import-progress hidden">
+            <div class="personal-progress-bar"><div class="personal-progress-fill indeterminate"></div></div>
+            <div class="report-import-progress-text"></div>
+          </div>
+          <div id="report-import-result" class="report-import-result"></div>
+        </div>
       </div>
     </div>
   `;
   page.querySelector('.report-back-btn')!.addEventListener('click', closeReportPage);
+
+  let platform: 'lichess' | 'chesscom' = 'lichess';
+  const monthsRow = page.querySelector('#report-import-months')!;
+
+  page.querySelectorAll('.report-import-platform .segment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      platform = (btn as HTMLElement).dataset.platform as 'lichess' | 'chesscom';
+      page.querySelectorAll('.report-import-platform .segment-btn').forEach(b =>
+        b.classList.toggle('selected', b === btn)
+      );
+      monthsRow.classList.toggle('hidden', platform !== 'chesscom');
+    });
+  });
+
+  const importBtn = page.querySelector('#report-import-btn') as HTMLButtonElement;
+  const usernameInput = page.querySelector('#report-import-username') as HTMLInputElement;
+  const progressEl = page.querySelector('#report-import-progress')!;
+  const progressText = page.querySelector('.report-import-progress-text')!;
+  const resultEl = page.querySelector('#report-import-result')!;
+
+  usernameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doImport(); });
+  importBtn.addEventListener('click', doImport);
+
+  let abortController: AbortController | null = null;
+
+  async function doImport(): Promise<void> {
+    const username = usernameInput.value.trim();
+    if (!username) {
+      resultEl.textContent = 'Please enter a username.';
+      resultEl.className = 'report-import-result error';
+      return;
+    }
+
+    importBtn.disabled = true;
+    resultEl.textContent = '';
+    resultEl.className = 'report-import-result';
+    progressEl.classList.remove('hidden');
+    abortController = new AbortController();
+
+    const onProgress = (msg: string, count: number) => {
+      progressText.textContent = `${msg} (${formatNum(count)} games)`;
+    };
+
+    try {
+      let total: number;
+      if (platform === 'lichess') {
+        total = await importFromLichess(username, onProgress, abortController.signal);
+      } else {
+        const monthsVal = (page.querySelector('#report-months-input') as HTMLInputElement).value.trim();
+        const maxMonths = monthsVal ? parseInt(monthsVal, 10) : undefined;
+        total = await importFromChesscom(username, onProgress, abortController.signal, maxMonths && maxMonths > 0 ? maxMonths : undefined);
+      }
+      progressEl.classList.add('hidden');
+      importBtn.disabled = false;
+      resultEl.textContent = `Imported ${formatNum(total)} games.`;
+      resultEl.className = 'report-import-result success';
+      // Re-render the report page with data
+      setTimeout(() => openReportPage(), 500);
+    } catch (e) {
+      progressEl.classList.add('hidden');
+      importBtn.disabled = false;
+      const msg = e instanceof Error ? e.message : 'Import failed';
+      resultEl.textContent = msg;
+      resultEl.className = 'report-import-result error';
+    }
+  }
 }
 
 // ── Filter Logic ──
@@ -292,8 +391,8 @@ function inferCurrentRatingInfo(
 
 function isUsingCurrentRatingWindow(filters: ReportFilters): boolean {
   if (reportCurrentRating == null) return false;
-  return filters.minRating === reportCurrentRating - CURRENT_RATING_WINDOW
-    && filters.maxRating === reportCurrentRating + CURRENT_RATING_WINDOW;
+  const b = currentRatingBounds(reportCurrentRating);
+  return filters.minRating === b.min && filters.maxRating === b.max;
 }
 
 function syncExplorerFilters(filters: ReportFilters): void {
@@ -481,14 +580,15 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
   const bar = el('div', 'report-filter-bar');
 
   // Time control chips
-  if (stats.timeClasses.length > 1) {
+  const visibleTimeClasses = stats.timeClasses.filter(tc => tc !== 'unknown');
+  if (visibleTimeClasses.length > 1) {
     const group = el('div', 'report-filter-group');
     const label = el('span', 'report-filter-label');
     label.textContent = 'Time';
     group.append(label);
 
     const activeTC = reportFilters.timeClasses ?? [];
-    for (const tc of stats.timeClasses) {
+    for (const tc of visibleTimeClasses) {
       const chip = el('button', 'chip chip-sm');
       if (activeTC.length === 0 || activeTC.includes(tc)) chip.classList.add('selected');
       chip.dataset.tc = tc;
@@ -531,6 +631,11 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
       { label: '1m', since: monthsAgo(1), until: rangeEndYmd },
     ];
 
+    const currentSince = reportFilters.sinceDate ?? '';
+    const currentUntil = reportFilters.untilDate ?? '';
+    const matchesPreset = presets.some(p => p.since === currentSince && p.until === currentUntil);
+    const isCustom = !matchesPreset && (currentSince !== '' || currentUntil !== '');
+
     const segment = el('div', 'segment-picker segment-sm') as HTMLDivElement;
     segment.setAttribute('role', 'radiogroup');
     segment.setAttribute('aria-label', 'Date range period');
@@ -540,23 +645,46 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
       segmentBtn.type = 'button';
       segmentBtn.dataset.since = preset.since;
       segmentBtn.dataset.until = preset.until;
-      const isActive = (reportFilters.sinceDate ?? '') === preset.since &&
-        (reportFilters.untilDate ?? '') === preset.until;
+      const isActive = !isCustom && currentSince === preset.since && currentUntil === preset.until;
       if (isActive) segmentBtn.classList.add('selected');
       segmentBtn.textContent = preset.label;
       segmentBtn.setAttribute('role', 'radio');
       segmentBtn.setAttribute('aria-checked', isActive ? 'true' : 'false');
       segmentBtn.tabIndex = isActive ? 0 : -1;
       segmentBtn.addEventListener('click', () => {
-        if ((reportFilters.sinceDate ?? '') === preset.since &&
-          (reportFilters.untilDate ?? '') === preset.until) return;
+        if (!isCustom && currentSince === preset.since && currentUntil === preset.until) return;
         reportFilters.sinceDate = preset.since || undefined;
         reportFilters.untilDate = preset.until || undefined;
         rerender();
       });
       segment.append(segmentBtn);
     }
+
+    // Custom button
+    const customBtn = el('button', 'segment-btn') as HTMLButtonElement;
+    customBtn.type = 'button';
+    customBtn.textContent = 'Custom';
+    if (isCustom) customBtn.classList.add('selected');
+    customBtn.setAttribute('role', 'radio');
+    customBtn.setAttribute('aria-checked', isCustom ? 'true' : 'false');
+    customBtn.tabIndex = isCustom ? 0 : -1;
+    customBtn.dataset.custom = 'true';
+    customBtn.addEventListener('click', () => {
+      if (isCustom) return;
+      // Switch to custom mode — keep current dates but mark as custom
+      reportFilters.sinceDate = reportFilters.sinceDate ?? monthsAgo(3);
+      reportFilters.untilDate = reportFilters.untilDate ?? rangeEndYmd;
+      // Nudge a day so it won't match any preset
+      const since = parseYmd(reportFilters.sinceDate);
+      since.setDate(since.getDate() + 1);
+      reportFilters.sinceDate = toYmd(since);
+      rerender();
+    });
+    segment.append(customBtn);
     group.append(segment);
+
+    const dateInputsWrapper = el('div', 'report-filter-date-inputs');
+    if (!isCustom) dateInputsWrapper.classList.add('hidden');
 
     const fromInput = document.createElement('input');
     fromInput.type = 'date';
@@ -585,7 +713,8 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     fromInput.addEventListener('change', applyDateInputs);
     toInput.addEventListener('change', applyDateInputs);
 
-    group.append(fromInput, sep, toInput);
+    dateInputsWrapper.append(fromInput, sep, toInput);
+    group.append(dateInputsWrapper);
     bar.append(group);
   }
 
@@ -598,25 +727,34 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     label.textContent = 'Side';
     group.append(label);
 
-    const whiteChip = el('button', 'chip chip-sm');
-    whiteChip.dataset.color = 'white';
-    whiteChip.textContent = 'White';
-    if (reportFilters.color !== 'black') whiteChip.classList.add('selected');
-    whiteChip.addEventListener('click', () => {
-      whiteChip.classList.toggle('selected');
-      applyFiltersFromBar(bar);
-    });
+    const sideSegment = el('div', 'segment-picker segment-sm') as HTMLDivElement;
+    sideSegment.setAttribute('role', 'radiogroup');
+    sideSegment.setAttribute('aria-label', 'Side filter');
 
-    const blackChip = el('button', 'chip chip-sm');
-    blackChip.dataset.color = 'black';
-    blackChip.textContent = 'Black';
-    if (reportFilters.color !== 'white') blackChip.classList.add('selected');
-    blackChip.addEventListener('click', () => {
-      blackChip.classList.toggle('selected');
-      applyFiltersFromBar(bar);
-    });
+    const sideOptions: { label: string; value: string | undefined }[] = [
+      { label: 'Both', value: undefined },
+      { label: 'White', value: 'white' },
+      { label: 'Black', value: 'black' },
+    ];
 
-    group.append(whiteChip, blackChip);
+    for (const opt of sideOptions) {
+      const btn = el('button', 'segment-btn') as HTMLButtonElement;
+      btn.type = 'button';
+      btn.textContent = opt.label;
+      const isActive = reportFilters.color === opt.value;
+      if (isActive) btn.classList.add('selected');
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
+      btn.tabIndex = isActive ? 0 : -1;
+      btn.addEventListener('click', () => {
+        if (reportFilters.color === opt.value) return;
+        reportFilters.color = opt.value as 'white' | 'black' | undefined;
+        rerender();
+      });
+      sideSegment.append(btn);
+    }
+
+    group.append(sideSegment);
     bar.append(group);
   }
 
@@ -666,8 +804,9 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
           reportFilters.minRating = undefined;
           reportFilters.maxRating = undefined;
         } else {
-          reportFilters.minRating = currentRating - CURRENT_RATING_WINDOW;
-          reportFilters.maxRating = currentRating + CURRENT_RATING_WINDOW;
+          const b = currentRatingBounds(currentRating);
+          reportFilters.minRating = b.min;
+          reportFilters.maxRating = b.max;
         }
         rerender();
       });
@@ -691,8 +830,8 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     resetBtn.addEventListener('click', () => {
       reportFilters = {
         timeClasses: undefined,
-        minRating: reportCurrentRating != null ? reportCurrentRating - CURRENT_RATING_WINDOW : undefined,
-        maxRating: reportCurrentRating != null ? reportCurrentRating + CURRENT_RATING_WINDOW : undefined,
+        minRating: reportCurrentRating != null ? currentRatingBounds(reportCurrentRating).min : undefined,
+        maxRating: reportCurrentRating != null ? currentRatingBounds(reportCurrentRating).max : undefined,
         color: undefined,
       };
       rerender();
@@ -712,13 +851,6 @@ function applyFiltersFromBar(bar: HTMLElement): void {
   } else {
     reportFilters.timeClasses = undefined;
   }
-
-  // Collect side chips (white/black)
-  const sideSelected = Array.from(bar.querySelectorAll('.chip[data-color].selected'))
-    .map(c => (c as HTMLElement).dataset.color)
-    .filter((c): c is 'white' | 'black' => c === 'white' || c === 'black');
-  if (sideSelected.length === 1) reportFilters.color = sideSelected[0];
-  else reportFilters.color = undefined;
 
   rerender();
 }
@@ -828,9 +960,6 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   const continuations = el('div', 'report-continuations');
   analysisCol.append(continuations);
 
-  const diagnostics = el('div', 'report-line-diagnostics');
-  analysisCol.append(diagnostics);
-
   // Initialize mini board
   reportCg = Chessground(boardWrap, {
     viewOnly: true,
@@ -845,7 +974,7 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   lineFens = [];
   lineLastMoves = [];
   lineGameResultFilter = 'all';
-  renderLineDiagnostics();
+
   renderSelectedLineGames();
 }
 
@@ -1087,9 +1216,8 @@ function renderTheoryModal(parent: HTMLElement): void {
     <ol>
       <li>Pick top weak openings by Priority, then target their weakest continuation lines.</li>
       <li>Use Preview to inspect the branch and opponent continuations.</li>
-      <li>Check Line diagnostics:
-        <b>Critical move drops</b> show where your own move choice underperforms alternatives.
-        <b>Opponent response vulnerabilities</b> show replies that hurt often and below baseline.
+      <li>Check Line diagnostics for <b>Critical move drops</b> — where your move choice underperforms alternatives.
+        Continuation rows are color-coded when it's the opponent's turn: red = hurts you, green = you exploit.
       </li>
       <li>Use Open in trainer from board preview to train from that line.</li>
       <li>After new games, re-check if Priority drops and Win% improves.</li>
@@ -1433,16 +1561,7 @@ function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLE
     `Simple family estimate: (wins - losses) * 8 = (${family.wdl.wins} - ${family.wdl.losses}) * 8.`,
   );
 
-  const spreadChip = document.createElement('span');
-  spreadChip.textContent = `Spread ${family.continuationSpreadPct}%`;
-  if (family.continuationSpreadPct >= 10) spreadChip.classList.add('chip-warn');
-  spreadChip.classList.add('tooltip-wide');
-  spreadChip.setAttribute(
-    'data-tooltip',
-    'Continuation spread = max(continuation Score%) - min(continuation Score%) in this family.',
-  );
-
-  stats.append(priorityChip, winChip, deltaChip, spreadChip);
+  stats.append(priorityChip, winChip, deltaChip);
   card.append(stats);
 
   const snippets = el('div', 'report-family-snippets');
@@ -2031,7 +2150,7 @@ function updateBoardForLine(): void {
 
   // Update continuations from this position
   renderContinuations(fen);
-  renderLineDiagnostics();
+
   renderSelectedLineGames();
 }
 
@@ -2049,212 +2168,85 @@ function renderContinuations(fen: string): void {
   heading.textContent = 'Continuations';
   container.append(heading);
 
+  const grandTotal = data.moves.reduce((s, m) => s + m.white + m.draws + m.black, 0);
+
+  // Determine if this is an opponent move position for score coloring
+  const isWhite = selectedLine?.color === 'white';
+  const isOpponentTurn = selectedLine
+    ? (isWhite ? lineViewIndex % 2 === 1 : lineViewIndex % 2 === 0)
+    : false;
+
   for (const move of data.moves.slice(0, 8)) {
     const total = move.white + move.draws + move.black;
     if (total === 0) continue;
 
+    const locked = isMoveLocked(fen, move.uci);
     const row = el('div', 'report-cont-row');
+    if (locked) row.classList.add('locked');
+
+    if (isOpponentTurn && selectedLine && total >= 3) {
+      const pickPctRaw = grandTotal > 0 ? (total / grandTotal) * 100 : 0;
+      if (pickPctRaw >= 10) {
+        const wins = isWhite ? move.white : move.black;
+        const moveScore = Math.round(((wins + move.draws * 0.5) / total) * 100);
+        const scoreClass = scoreSeverityClass(moveScore);
+        row.classList.add(scoreClass);
+      }
+    }
+    const wins = isWhite ? move.white : move.black;
+    const losses = isWhite ? move.black : move.white;
+    const winPct = Math.round((wins / total) * 100);
+    const scorePct = Math.round(((wins + move.draws * 0.5) / total) * 100);
+    const elo = (wins - losses) * 8;
+    const eloStr = elo > 0 ? `+${elo}` : `${elo}`;
+    row.setAttribute(
+      'data-tooltip',
+      `Score ${scorePct}% · Win ${winPct}% · ${wins}W ${move.draws}D ${losses}L · ~Elo Δ${eloStr}`,
+    );
+    row.classList.add('tooltip-wide');
     row.addEventListener('click', () => extendLine(move.uci, move.san));
 
     const san = el('span', 'report-cont-san');
     san.textContent = move.san;
 
+    const pickPct = grandTotal > 0 ? (total / grandTotal) * 100 : 0;
+    const pickBar = el('span', 'report-cont-pick');
+    const pickFill = el('span', 'pct-fill');
+    pickFill.style.width = `${pickPct}%`;
+    const pickLabel = el('span', 'pct-label');
+    pickLabel.textContent = `${Math.round(pickPct)}%`;
+    pickBar.append(pickFill, pickLabel);
+
     const games = el('span', 'report-cont-games');
     games.textContent = formatNum(total);
 
-    const isWhite = selectedLine?.color === 'white';
-    const userWins = isWhite ? move.white : move.black;
-    const rate = el('span', 'report-cont-rate');
-    const pct = Math.round((userWins / total) * 100);
-    rate.textContent = `${pct}%`;
-    if (pct >= 55) rate.classList.add('good');
-    else if (pct <= 40) rate.classList.add('bad');
-
+    const wPct = Math.round((move.white / total) * 100);
+    const dPct = Math.round((move.draws / total) * 100);
+    const bPct = 100 - wPct - dPct;
     const bar = el('div', 'report-cont-bar');
-    const wPct = (move.white / total) * 100;
-    const dPct = (move.draws / total) * 100;
-    const bPct = (move.black / total) * 100;
-    const wEl = el('div', 'bar-white');
+    const wEl = el('span', 'bar-white');
     wEl.style.width = `${wPct}%`;
-    const dEl = el('div', 'bar-draw');
+    if (wPct > 12) wEl.textContent = `${wPct}%`;
+    const dEl = el('span', 'bar-draw');
     dEl.style.width = `${dPct}%`;
-    const bEl = el('div', 'bar-black');
+    if (dPct > 8) dEl.textContent = `${dPct}%`;
+    const bEl = el('span', 'bar-black');
     bEl.style.width = `${bPct}%`;
+    if (bPct > 12) bEl.textContent = `${bPct}%`;
     bar.append(wEl, dEl, bEl);
 
-    row.append(san, games, rate, bar);
+    const lockBtn = document.createElement('button');
+    lockBtn.className = `report-cont-lock${locked ? ' locked' : ''}`;
+    lockBtn.innerHTML = locked
+      ? '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"/></svg>';
+    lockBtn.addEventListener('click', (e) => { e.stopPropagation(); });
+
+    row.append(san, pickBar, games, bar, lockBtn);
     container.append(row);
   }
 }
 
-function renderLineDiagnostics(): void {
-  const container = document.querySelector('.report-line-diagnostics');
-  if (!container) return;
-  container.innerHTML = '';
-
-  const title = el('div', 'report-line-diagnostics-title');
-  title.textContent = 'Line diagnostics';
-  container.append(title);
-  const legend = el('div', 'report-line-diagnostics-legend');
-  legend.textContent = 'Score uses chess points (Win=1, Draw=0.5). Parent Loss/100 is per 100 visits to this position.';
-  container.append(legend);
-
-  if (!selectedLine) {
-    const empty = el('div', 'report-line-diagnostics-empty');
-    empty.textContent = 'Select an opening to see where it breaks down.';
-    container.append(empty);
-    return;
-  }
-
-  const criticalSection = el('div', 'report-line-diag-section');
-  const criticalTitle = el('div', 'report-line-diag-heading');
-  criticalTitle.textContent = 'Critical move drops';
-  criticalSection.append(criticalTitle);
-
-  if (selectedLine.criticalDrops.length === 0) {
-    const empty = el('div', 'report-line-diagnostics-empty');
-    empty.textContent = 'No major move drop detected at current sample size.';
-    criticalSection.append(empty);
-  } else {
-    const list = el('div', 'report-line-diag-list');
-    for (const drop of selectedLine.criticalDrops) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'report-line-diag-row critical';
-      row.addEventListener('click', () => {
-        lineViewIndex = Math.min(drop.ply, lineFens.length - 1);
-        updateBoardForLine();
-      });
-
-      const move = el('div', 'report-line-diag-move');
-      move.textContent = formatPlyMove(drop.ply, drop.moveSan);
-
-      const chips = el('div', 'report-line-diag-chips');
-
-      const dropChip = document.createElement('span');
-      dropChip.className = 'report-line-diag-chip bad';
-      dropChip.textContent = `Score\u0394 ${formatSignedPct(-drop.dropPct)}`;
-      dropChip.setAttribute(
-        'data-tooltip',
-        `This move scores ${formatPct(drop.childScorePct)}%, while alternatives from the parent `
-          + `average ${formatPct(drop.parentScorePct)}%.`,
-      );
-      dropChip.classList.add('tooltip-wide');
-
-      const scoreChip = document.createElement('span');
-      scoreChip.className = 'report-line-diag-chip';
-      scoreChip.textContent = `Score ${formatPct(drop.childScorePct)}%`;
-      scoreChip.setAttribute(
-        'data-tooltip',
-        'Your average score after this move (Win=1, Draw=0.5, Loss=0).',
-      );
-      scoreChip.classList.add('tooltip-wide');
-
-      const gamesChip = document.createElement('span');
-      gamesChip.className = 'report-line-diag-chip';
-      gamesChip.textContent = `${formatNum(drop.games)} games`;
-      gamesChip.setAttribute('data-tooltip', 'Number of games backing this estimate.');
-
-      chips.append(dropChip, scoreChip, gamesChip);
-      row.append(move, chips);
-      list.append(row);
-    }
-    criticalSection.append(list);
-  }
-
-  container.append(criticalSection);
-
-  const vulnSection = el('div', 'report-line-diag-section');
-  const vulnTitle = el('div', 'report-line-diag-heading');
-  vulnTitle.textContent = 'Opponent response vulnerabilities';
-  vulnSection.append(vulnTitle);
-
-  if (selectedLine.vulnerabilityContext?.moveSan) {
-    const context = el('div', 'report-line-diag-context');
-    context.textContent = `After ${formatPlyMove(
-      selectedLine.vulnerabilityContext.ply,
-      selectedLine.vulnerabilityContext.moveSan,
-    )}`;
-    vulnSection.append(context);
-    if (selectedLine.vulnerabilityContext.isFallback) {
-      const fallback = el('div', 'report-line-diag-context report-line-diag-context-fallback');
-      fallback.textContent = `Sparse endpoint data; showing nearest earlier context after ${formatPlyMove(
-        selectedLine.vulnerabilityContext.actualPly,
-        selectedLine.vulnerabilityContext.moveSan,
-      )}.`;
-      vulnSection.append(fallback);
-    }
-  }
-
-  if (selectedLine.vulnerableResponses.length === 0) {
-    const empty = el('div', 'report-line-diagnostics-empty');
-    empty.textContent = 'No vulnerable opponent reply stands out in this line.';
-    vulnSection.append(empty);
-  } else {
-    const list = el('div', 'report-line-diag-list');
-    for (const response of selectedLine.vulnerableResponses) {
-      const severityClass = vulnerabilitySeverityClass(response.vulnerability);
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = `report-line-diag-row ${severityClass}`;
-      row.addEventListener('click', () => previewVulnerableResponse(response.moveUci, response.moveSan));
-
-      const move = el('div', 'report-line-diag-move');
-      move.textContent = response.moveSan;
-
-      const chips = el('div', 'report-line-diag-chips');
-      const freqChip = document.createElement('span');
-      freqChip.className = 'report-line-diag-chip';
-      freqChip.textContent = `${response.frequencyPct}% freq`;
-      freqChip.setAttribute(
-        'data-tooltip',
-        'How often opponents choose this reply from the shown position.',
-      );
-      freqChip.classList.add('tooltip-wide');
-
-      const scoreChip = document.createElement('span');
-      scoreChip.className = 'report-line-diag-chip';
-      scoreChip.textContent = `Score ${response.scorePct}%`;
-      scoreChip.setAttribute(
-        'data-tooltip',
-        'Your average score after this opponent reply (Win=1, Draw=0.5, Loss=0).',
-      );
-      scoreChip.classList.add('tooltip-wide');
-
-      const costChip = document.createElement('span');
-      costChip.className = `report-line-diag-chip cost ${severityClass}`;
-      costChip.textContent = `Parent Loss/100 ${formatPct(response.vulnerability * 100)}`;
-      costChip.setAttribute(
-        'data-tooltip',
-        'Estimated score points lost per 100 visits to this parent position from this reply: '
-          + '100 x [frequency x max(0, baseline score - score vs this reply)].',
-      );
-      costChip.classList.add('tooltip-wide');
-
-      const gamesChip = document.createElement('span');
-      gamesChip.className = 'report-line-diag-chip';
-      gamesChip.textContent = `${formatNum(response.games)} games`;
-      gamesChip.setAttribute('data-tooltip', 'Number of games for this reply.');
-
-      chips.append(costChip, freqChip, scoreChip, gamesChip);
-      row.append(move, chips);
-      list.append(row);
-    }
-    vulnSection.append(list);
-  }
-
-  container.append(vulnSection);
-}
-
-function previewVulnerableResponse(uci: string, san: string): void {
-  if (!selectedLine || !selectedLine.vulnerabilityContext) return;
-  const contextPly = selectedLine.vulnerabilityContext.actualPly;
-  if (contextPly < 0 || contextPly >= lineFens.length) return;
-
-  lineViewIndex = contextPly;
-  updateBoardForLine();
-  extendLine(uci, san);
-}
 
 type LineGameRow = {
   href: string;
@@ -2389,20 +2381,17 @@ function renderSelectedLineGames(): void {
       result.className = `report-line-game-result ${row.result}`;
       result.textContent = row.result === 'win' ? 'W' : row.result === 'draw' ? 'D' : 'L';
 
-      const meta = el('div', 'report-line-game-meta');
-      const opp = el('div', 'report-line-game-opp');
+      const opp = el('span', 'report-line-game-opp');
       const oppName = row.opponent ? row.opponent : 'Game';
       const or = row.oppRating > 0 ? ` (${row.oppRating})` : '';
       opp.textContent = `${oppName}${or}`;
-      const month = el('div', 'report-line-game-month');
-      month.textContent = row.date || '';
+      const dateSpan = el('span', 'report-line-game-date');
+      dateSpan.textContent = formatShortDate(row.date);
       const external = el('span', 'report-line-game-external');
       external.setAttribute('aria-hidden', 'true');
-      external.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
+      external.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
 
-      meta.append(opp, month);
-
-      link.append(result, meta, external);
+      link.append(result, opp, dateSpan, external);
       list.append(link);
     }
   }
@@ -2456,6 +2445,18 @@ function textEl(tag: string, className: string, text: string): HTMLElement {
   return e;
 }
 
+function formatShortDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return dateStr;
+  const yy = parts[0].slice(-2);
+  const m = parseInt(parts[1], 10);
+  if (parts.length >= 3 && parts[2] !== '01') {
+    return `${parseInt(parts[2], 10)}/${m}/${yy}`;
+  }
+  return `${m}/${yy}`;
+}
+
 function formatNum(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return n.toString();
@@ -2472,12 +2473,6 @@ function formatSignedPct(n: number): string {
   return `${sign}${formatPct(abs)}%`;
 }
 
-function formatPlyMove(ply: number, san: string): string {
-  const moveNo = Math.floor((ply + 1) / 2);
-  if (ply % 2 === 1) return `${moveNo}. ${san}`;
-  return `${moveNo}... ${san}`;
-}
-
 function formatSignedNum(n: number | null): string {
   if (n == null) return '—';
   return `${n > 0 ? '+' : ''}${n}`;
@@ -2487,13 +2482,12 @@ function formatImpact(n: number): string {
   return n.toFixed(2).replace(/\.00$/, '');
 }
 
-function vulnerabilitySeverityClass(
-  vulnerability: number,
-): 'severity-high' | 'severity-mid' | 'severity-low' {
-  const lossPer100 = vulnerability * 100;
-  if (lossPer100 >= 4) return 'severity-high';
-  if (lossPer100 >= 2) return 'severity-mid';
-  return 'severity-low';
+function scoreSeverityClass(
+  scorePct: number,
+): 'score-bad' | 'score-ok' | 'score-good' {
+  if (scorePct <= 40) return 'score-bad';
+  if (scorePct >= 60) return 'score-good';
+  return 'score-ok';
 }
 
 function priorityScaleTooltip(): string {

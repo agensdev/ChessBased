@@ -78,6 +78,7 @@ export interface PersonalFilters {
 export interface LichessFilters {
   perfType?: string[];
   rated?: boolean;
+  since?: number; // Unix timestamp in ms
 }
 
 export interface ChesscomFilters {
@@ -677,6 +678,9 @@ export async function importFromLichess(
   if (filters?.rated !== undefined) {
     url += `&rated=${filters.rated}`;
   }
+  if (filters?.since) {
+    url += `&since=${filters.since}`;
+  }
 
   const resp = await fetch(url, {
     headers: { 'Accept': 'application/x-chess-pgn' },
@@ -739,6 +743,7 @@ export async function importFromChesscom(
   username: string,
   onProgress: (msg: string, count: number) => void,
   signal?: AbortSignal,
+  maxMonths?: number,
 ): Promise<number> {
   const existingConfig = loadConfig();
   const isSameUser = existingConfig?.platform === 'chesscom' &&
@@ -791,6 +796,8 @@ export async function importFromChesscom(
     } else {
       startIndex = Math.max(0, allArchives.length - 2);
     }
+  } else if (maxMonths) {
+    startIndex = Math.max(0, allArchives.length - maxMonths);
   }
   const archives = allArchives.slice(startIndex);
   const skipped = allArchives.length - archives.length;
