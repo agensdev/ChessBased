@@ -13,7 +13,13 @@
   <div id="app">
     <div id="left-sidebar">
       <div id="system-picker"></div>
+      <div id="repertoire-actions"></div>
       <div id="config-inline"></div>
+      <button id="report-btn" class="btn btn-report hidden">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+        Games report
+      </button>
+      <div id="recent-games-container"></div>
     </div>
     <div id="settings-drawer-overlay" class="drawer-overlay hidden"></div>
     <div id="settings-drawer" class="drawer hidden">
@@ -62,10 +68,6 @@
       </div>
       <div id="tab-explorer" class="tab-panel">
         <div id="explorer-moves"></div>
-        <button id="report-btn" class="btn btn-report hidden">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-          Games report
-        </button>
       </div>
     </div>
     <div id="pgn-modal-overlay" class="drawer-overlay hidden"></div>
