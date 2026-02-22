@@ -6,12 +6,13 @@ import type {
   ExplorerResponse,
   GamePhase,
   MoveBadge,
+  MoveHistoryEntry,
   PlayerColor,
   PositionAnalysis,
 } from './types';
 import { ALL_ALERT_TYPES, RATING_OPTIONS, SPEED_OPTIONS } from './types';
 import type { Key } from '@lichess-org/chessground/types';
-import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes, getOrientation } from './board';
+import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShapes, getOrientation, setOrientation, replayLine } from './board';
 import {
   isMoveLocked, lockMove, unlockMove, getLockedMoves,
   getOpeningNames, getActiveOpening, switchOpening, createOpening, deleteOpening, renameOpening,
@@ -22,6 +23,7 @@ import {
 import type { MergeStrategy } from './repertoire';
 import { importPgn, fetchStudyPgn } from './pgn-import';
 import { initLibraryModal, openLibraryModal } from './opening-library';
+import { findOpeningByEco, findPgnByEco } from './opening-index';
 import { exportActiveOpening, exportAll } from './pgn-export';
 import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
@@ -30,13 +32,14 @@ import type { EngineLine } from './engine';
 import { Chess } from 'chessops/chess';
 import { parseFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
-import { makeSan } from 'chessops/san';
+import { makeSan, parseSan } from 'chessops/san';
+import { makeUci } from 'chessops';
 import {
   getExplorerMode, setExplorerMode, hasPersonalData, getPersonalConfig,
   queryPersonalExplorer, clearPersonalData, importFromLichess, importFromChesscom,
   initPersonalExplorer, getPersonalStats, setPersonalFilters, getPersonalFilters,
-  getFilteredGameCount,
-  type ExplorerMode, type Platform, type LichessFilters,
+  getFilteredGameCount, getPersonalGames,
+  type ExplorerMode, type Platform, type LichessFilters, type GameMeta,
 } from './personal-explorer';
 import { openReportPage, isReportPageOpen } from './report-ui';
 
@@ -2120,12 +2123,14 @@ export function updateExplorerPanel(): void {
       noData.textContent = 'No games in this position.';
       el.append(noData);
       renderPersonalColorNote(el);
+      renderRecentGames(el);
       return;
     }
 
     // No analysis badges in personal mode
     renderMoveRows(moves, fen, null, el);
     renderPersonalColorNote(el);
+    renderRecentGames(el);
     return;
   }
 
@@ -2173,6 +2178,143 @@ export function updateExplorerPanel(): void {
   const analysis = result?.analysis ?? null;
 
   renderMoveRows(moves, fen, analysis, el);
+}
+
+// ── Recent Games ──
+
+let recentGamesExpanded = true;
+
+function userResult(game: GameMeta): 'win' | 'draw' | 'loss' {
+  if (game.re === 'd') return 'draw';
+  const whiteWon = game.re === 'w';
+  return (whiteWon === game.uw) ? 'win' : 'loss';
+}
+
+function shortDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return dateStr;
+  const yy = parts[0].slice(-2);
+  const m = parseInt(parts[1], 10);
+  if (parts.length >= 3 && parts[2] !== '01') {
+    return `${parseInt(parts[2], 10)}/${m}/${yy}`;
+  }
+  return `${m}/${yy}`;
+}
+
+function pgnToLine(pgn: string): MoveHistoryEntry[] {
+  const tokens = pgn.replace(/\d+\.\s*/g, '').trim().split(/\s+/).filter(t => t && t !== '*');
+  const chess = Chess.default();
+  const line: MoveHistoryEntry[] = [];
+  for (const san of tokens) {
+    const move = parseSan(chess, san);
+    if (!move) break;
+    const uci = makeUci(move);
+    chess.play(move);
+    line.push({ san, uci, fen: '' }); // fen rebuilt by replayLine
+  }
+  return line;
+}
+
+function gameTimestamp(game: GameMeta): string {
+  const date = game.da ?? game.mo;
+  const time = game.ti ?? '';
+  return time ? `${date}T${time}` : date;
+}
+
+function renderRecentGames(container: HTMLElement): void {
+  const games = getPersonalGames();
+  if (!games || games.length === 0) return;
+
+  // Index each game to use array position as tiebreaker
+  const indexed = games.map((g, i) => ({ game: g, idx: i }));
+  indexed.sort((a, b) => {
+    const cmp = gameTimestamp(b.game).localeCompare(gameTimestamp(a.game));
+    return cmp !== 0 ? cmp : b.idx - a.idx;
+  });
+  const recent = indexed.slice(0, 20);
+
+  const section = document.createElement('div');
+  section.className = 'recent-games';
+
+  const header = document.createElement('button');
+  header.className = 'recent-games-header';
+  header.innerHTML = `<span>Recent Games</span><svg class="recent-games-chevron${recentGamesExpanded ? ' expanded' : ''}" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
+  section.append(header);
+
+  const list = document.createElement('div');
+  list.className = 'recent-games-list';
+  if (!recentGamesExpanded) list.style.display = 'none';
+
+  for (const { game } of recent) {
+    const result = userResult(game);
+
+    const row = document.createElement('div');
+    row.className = 'recent-game-row';
+
+    // Click row → load opening in trainer with correct orientation
+    if (game.ec) {
+      const eco = game.ec;
+      const color = game.uw ? 'white' : 'black';
+      row.classList.add('clickable');
+      row.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.recent-game-external')) return;
+        const entry = findPgnByEco(eco);
+        if (!entry) return;
+        const line = pgnToLine(entry.pgn);
+        if (line.length > 0) {
+          setOrientation(color);
+          replayLine(line);
+        }
+      });
+    }
+
+    row.classList.add(game.uw ? 'as-white' : 'as-black');
+
+    const badge = document.createElement('span');
+    badge.className = `recent-game-result ${result}`;
+    badge.textContent = result === 'win' ? 'W' : result === 'draw' ? 'D' : 'L';
+
+    const opening = document.createElement('span');
+    opening.className = 'recent-game-opening';
+    opening.textContent = (game.ec ? findOpeningByEco(game.ec) ?? game.ec : '—');
+
+    const info = document.createElement('span');
+    info.className = 'recent-game-info';
+    const oppName = game.op ?? 'Opponent';
+    info.textContent = `vs ${oppName} (${game.or})`;
+
+    const date = document.createElement('span');
+    date.className = 'recent-game-date';
+    date.textContent = shortDate(game.da ?? game.mo);
+
+    row.append(badge, opening, info, date);
+
+    if (game.gl) {
+      const ext = document.createElement('a');
+      ext.className = 'recent-game-external';
+      ext.href = game.gl;
+      ext.target = '_blank';
+      ext.rel = 'noreferrer noopener';
+      ext.title = 'Open game';
+      ext.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path fill="currentColor" d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>';
+      ext.addEventListener('click', (e) => e.stopPropagation());
+      row.append(ext);
+    }
+
+    list.append(row);
+  }
+
+  section.append(list);
+
+  header.addEventListener('click', () => {
+    recentGamesExpanded = !recentGamesExpanded;
+    list.style.display = recentGamesExpanded ? '' : 'none';
+    const chevron = header.querySelector('.recent-games-chevron');
+    chevron?.classList.toggle('expanded', recentGamesExpanded);
+  });
+
+  container.append(section);
 }
 
 function badgeSymbol(badge: MoveBadge): string {

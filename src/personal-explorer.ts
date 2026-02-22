@@ -49,6 +49,7 @@ export interface GameMeta {
   or: number;   // opponent rating
   mo: string;   // month: YYYY-MM
   da?: string;  // date: YYYY-MM-DD
+  ti?: string;  // time: HH:MM:SS (UTC)
   re: 'w' | 'd' | 'b'; // game result (white won / draw / black won)
   uw: boolean;  // user was white
   ec?: string;  // ECO code (e.g. C33)
@@ -521,12 +522,14 @@ export function processGamesIntoDB(
     const opponent = userIsWhite ? blackPlayer : whitePlayer;
 
     const dateParts = parseDateParts(game.headers);
+    const timeRaw = (game.headers.get('UTCTime') ?? game.headers.get('StartTime') ?? '').trim();
     const meta: GameMeta = {
       tc,
       ur: parseRating(game.headers, userIsWhite),
       or: parseRating(game.headers, !userIsWhite),
       mo: dateParts.month,
       da: dateParts.date,
+      ti: /^\d{2}:\d{2}/.test(timeRaw) ? timeRaw : undefined,
       re: result,
       uw: userIsWhite,
       ec: parseEco(game.headers),

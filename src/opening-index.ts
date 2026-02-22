@@ -43,3 +43,22 @@ export function findOpeningByFen(fen: string): OpeningLookup | null {
   return { eco: hit.eco, name: hit.name };
 }
 
+// ECO → shortest opening entry (family name, e.g. "Sicilian Defense" not "Sicilian Defense: Najdorf Variation")
+const openingByEco = new Map<string, OpeningEntry>();
+for (const opening of openings) {
+  const existing = openingByEco.get(opening.eco);
+  if (!existing || opening.name.length < existing.name.length) {
+    openingByEco.set(opening.eco, opening);
+  }
+}
+
+export function findOpeningByEco(eco: string): string | null {
+  return openingByEco.get(eco)?.name ?? null;
+}
+
+export function findPgnByEco(eco: string): { name: string; pgn: string } | null {
+  const entry = openingByEco.get(eco);
+  if (!entry) return null;
+  return { name: entry.name, pgn: entry.pgn };
+}
+
