@@ -272,7 +272,7 @@ function recomputeFilteredSet(): void {
   filteredGameSet = set;
 }
 
-function gameMatchesFilters(g: GameMeta): boolean {
+export function gameMatchesFilters(g: GameMeta): boolean {
   if (activeFilters.timeClasses && activeFilters.timeClasses.length > 0) {
     if (!activeFilters.timeClasses.includes(g.tc)) return false;
   }

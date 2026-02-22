@@ -450,6 +450,10 @@ cg-board square.selected {
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: var(--radius-lg);
   padding: 16px;
+  overflow: hidden;
+}
+
+#right-sidebar {
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -707,45 +711,35 @@ cg-board square.selected {
   flex-shrink: 0;
 }
 
-.system-card-action-row {
+.system-card-action-btn {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-
-.system-inline-action-btn {
-  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  padding: 0;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.system-inline-action-btn svg {
-  width: 12px;
-  height: 12px;
+.system-card-action-btn svg {
+  width: 13px;
+  height: 13px;
   fill: currentColor;
 }
 
-.system-inline-action-btn:hover {
-  border-color: var(--border-hover);
-  background: var(--bg-hover);
+.system-card-action-btn:hover {
   color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.system-inline-action-btn.danger:hover {
-  border-color: rgba(215, 90, 111, 0.35);
-  background: var(--danger-dim);
+.system-card-action-btn.danger:hover {
   color: var(--danger);
+  background: var(--danger-dim);
 }
 
 .system-icon-btn {
@@ -1068,6 +1062,10 @@ cg-board square.selected {
 }
 
 /* ── Status ── */
+#status {
+  min-height: 72px;
+}
+
 .opening-name {
   font-family: var(--font-display);
   font-size: 18px;
@@ -6021,18 +6019,72 @@ input[type='range']::-moz-range-track {
 
 /* Recent Games (My Games tab) */
 
+#recent-games-container:empty {
+  display: none;
+}
+
+#recent-games-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .recent-games {
   margin-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding-top: 8px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-games-empty {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.recent-games-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.recent-games-empty p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.recent-games-empty ul {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.recent-games-empty li {
+  margin-bottom: 2px;
 }
 
 .recent-games-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
+  gap: 4px;
   padding: 4px 8px;
+}
+
+.recent-games-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
   background: none;
   border: none;
   cursor: pointer;
@@ -6042,10 +6094,41 @@ input[type='range']::-moz-range-track {
   letter-spacing: 0.5px;
   color: var(--text-muted);
   font-family: var(--font-sans);
+  padding: 0;
 }
 
-.recent-games-header:hover {
+.recent-games-toggle:hover {
   color: var(--text-secondary);
+}
+
+.recent-games-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.recent-games-refresh.active {
+  color: var(--accent);
+}
+
+.recent-games-refresh:hover {
+  color: var(--text-secondary);
+}
+
+.recent-games-refresh.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .recent-games-chevron {
@@ -6057,12 +6140,19 @@ input[type='range']::-moz-range-track {
   transform: rotate(0deg);
 }
 
+.recent-games-filters {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
 .recent-games-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
   padding: 4px 0;
-  max-height: 400px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -6134,6 +6224,14 @@ input[type='range']::-moz-range-track {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.recent-game-rating {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .recent-game-info {
