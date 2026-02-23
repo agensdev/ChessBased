@@ -166,12 +166,17 @@
         </div>
         <div id="personal-range-filters" class="personal-filters">
           <div class="personal-filter-label">Import range</div>
-          <div class="segment-picker segment-sm import-range-picker">
-            <button class="segment-btn selected" data-months="0">All time</button>
-            <button class="segment-btn" data-months="60">5y</button>
-            <button class="segment-btn" data-months="36">3y</button>
-            <button class="segment-btn" data-months="12">1y</button>
-            <button class="segment-btn" data-months="6">6m</button>
+          <div class="import-range-row">
+            <div class="segment-picker segment-sm import-range-picker">
+              <button class="segment-btn selected" data-months="0">All time</button>
+              <button class="segment-btn" data-months="60">5y</button>
+              <button class="segment-btn" data-months="36">3y</button>
+              <button class="segment-btn" data-months="12">1y</button>
+              <button class="segment-btn" data-months="6">6m</button>
+            </div>
+            <span class="import-range-text">or</span>
+            <input id="personal-months-input" type="number" min="1" max="999" placeholder="Custom" class="personal-months-input" />
+            <span class="import-range-text">mo</span>
           </div>
         </div>
         <div id="personal-import-progress" class="personal-import-progress hidden">
