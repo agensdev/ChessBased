@@ -110,7 +110,7 @@ export function refreshHistoryTree(container: HTMLElement): void {
   };
 
   // Build full output
-  let html = '<button type="button" class="ht-tree-btn">Tree View</button>';
+  let html = '<button type="button" class="btn sm ht-tree-btn">Tree View</button>';
   html += '<div class="ht-pgn">';
   if (roots.length === 1) {
     html += renderInline(roots[0], [], true);

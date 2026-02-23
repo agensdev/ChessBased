@@ -56,9 +56,10 @@ function restoreElements(ids: string[]): void {
 function buildTabBar(): void {
   const container = document.getElementById('mobile-tabs')!;
   container.innerHTML = '';
+  container.className = 'segment-picker';
   for (const tab of TAB_CONFIG) {
     const btn = document.createElement('button');
-    btn.className = 'mobile-tab-btn' + (tab.id === activeTab ? ' active' : '');
+    btn.className = 'segment-btn' + (tab.id === activeTab ? ' selected' : '');
     btn.textContent = tab.label;
     btn.dataset.tab = tab.id;
     btn.addEventListener('click', () => switchTab(tab.id));
@@ -68,9 +69,9 @@ function buildTabBar(): void {
 
 function switchTab(id: TabId): void {
   activeTab = id;
-  const buttons = document.querySelectorAll('.mobile-tab-btn');
+  const buttons = document.querySelectorAll('.segment-btn');
   buttons.forEach((btn) => {
-    (btn as HTMLElement).classList.toggle('active', (btn as HTMLElement).dataset.tab === id);
+    (btn as HTMLElement).classList.toggle('selected', (btn as HTMLElement).dataset.tab === id);
   });
   for (const tab of TAB_CONFIG) {
     const panel = document.getElementById(`mobile-panel-${tab.id}`);

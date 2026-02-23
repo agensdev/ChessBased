@@ -52,7 +52,7 @@ function openTreeModal(roots: SubwayNode[], title: string): void {
     <div class="tree-modal">
       <div class="tree-modal-header">
         <h2>${escapeHtml(title)}</h2>
-        <button type="button" class="tree-modal-close">&times;</button>
+        <button type="button" class="btn icon ghost">&times;</button>
       </div>
       <div class="tree-modal-body">${html}</div>
     </div>

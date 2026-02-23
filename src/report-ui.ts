@@ -184,7 +184,7 @@ export async function openReportPage(): Promise<void> {
 function renderEmptyState(page: HTMLElement): void {
   page.innerHTML = `
     <div class="report-header">
-      <button class="report-back-btn">&larr; Back to trainer</button>
+      <button class="btn ghost">&larr; Back to trainer</button>
       <span class="report-title">Game Report</span>
       <span></span>
     </div>
@@ -215,7 +215,7 @@ function renderEmptyState(page: HTMLElement): void {
       </div>
     </div>
   `;
-  page.querySelector('.report-back-btn')!.addEventListener('click', closeReportPage);
+  page.querySelector('.report-header .btn.ghost')!.addEventListener('click', closeReportPage);
 
   let platform: 'lichess' | 'chesscom' = 'lichess';
   const monthsRow = page.querySelector('#report-import-months')!;
@@ -419,7 +419,7 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
 
   // Header
   const header = el('div', 'report-header');
-  const backBtn = el('button', 'report-back-btn');
+  const backBtn = el('button', 'btn ghost');
   backBtn.innerHTML = '&larr; Back to trainer';
   backBtn.addEventListener('click', closeReportPage);
   const title = el('span', 'report-title');
@@ -427,7 +427,7 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
   const right = el('div', 'report-header-right');
   const user = el('span', 'report-username');
   user.textContent = username;
-  const refreshBtn = el('button', 'report-refresh-btn') as HTMLButtonElement;
+  const refreshBtn = el('button', 'btn sm') as HTMLButtonElement;
   refreshBtn.textContent = reportRefreshInProgress ? 'Refreshing...' : 'Refresh games';
   refreshBtn.disabled = reportRefreshInProgress;
   const refreshStatus = el('span', 'report-refresh-status');
@@ -825,7 +825,7 @@ function renderFilterBar(page: HTMLElement, allGames: readonly GameMeta[], _user
     count.textContent = `${formatNum(filtered.length)} / ${formatNum(allGames.length)} games`;
     bar.append(count);
 
-    const resetBtn = el('button', 'report-filter-reset');
+    const resetBtn = el('button', 'btn sm ghost');
     resetBtn.textContent = 'Reset';
     resetBtn.addEventListener('click', () => {
       reportFilters = {
@@ -895,22 +895,22 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   // Nav controls
   const nav = el('div', 'report-board-nav');
 
-  const startBtn = el('button', 'report-nav-btn report-nav-start');
+  const startBtn = el('button', 'btn icon');
   startBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6zM6 6h2v12H6z"/></svg>';
   startBtn.addEventListener('click', () => { if (selectedLine) { lineViewIndex = 0; updateBoardForLine(); } });
 
-  const prevBtn = el('button', 'report-nav-btn report-nav-prev') as HTMLButtonElement;
+  const prevBtn = el('button', 'btn icon report-nav-prev') as HTMLButtonElement;
   prevBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>';
   prevBtn.addEventListener('click', () => navigateLine(-1));
 
   const counter = el('span', 'report-nav-counter');
   counter.textContent = '';
 
-  const nextBtn = el('button', 'report-nav-btn report-nav-next') as HTMLButtonElement;
+  const nextBtn = el('button', 'btn icon report-nav-next') as HTMLButtonElement;
   nextBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>';
   nextBtn.addEventListener('click', () => navigateLine(1));
 
-  const endBtn = el('button', 'report-nav-btn report-nav-end');
+  const endBtn = el('button', 'btn icon');
   endBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6zM16 6h2v12h-2z"/></svg>';
   endBtn.addEventListener('click', () => { if (selectedLine) { lineViewIndex = lineFens.length - 1; updateBoardForLine(); } });
 
@@ -922,7 +922,7 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   boardCol.append(boardLabel);
 
   // Open in trainer button
-  const trainerBtn = el('button', 'report-trainer-btn hidden') as HTMLButtonElement;
+  const trainerBtn = el('button', 'btn btn-primary report-trainer-btn hidden') as HTMLButtonElement;
   trainerBtn.textContent = 'Open in trainer';
   trainerBtn.addEventListener('click', () => {
     if (!selectedLine || lineViewIndex <= 0 || !reportNavigateCallback) return;
@@ -1087,7 +1087,7 @@ function renderReportGuide(parent: HTMLElement): void {
     </ol>
   `;
   const actions = el('div', 'report-guide-actions');
-  const theoryBtn = el('button', 'report-guide-theory-btn') as HTMLButtonElement;
+  const theoryBtn = el('button', 'btn sm ghost') as HTMLButtonElement;
   theoryBtn.textContent = 'Theory & methodology';
   theoryBtn.addEventListener('click', openTheoryModal);
   actions.append(theoryBtn);
@@ -1108,7 +1108,7 @@ function renderTheoryModal(parent: HTMLElement): void {
   const header = el('div', 'report-theory-header');
   const title = el('div', 'report-theory-title');
   title.textContent = 'Theory & Methodology';
-  const closeBtn = el('button', 'report-theory-close') as HTMLButtonElement;
+  const closeBtn = el('button', 'btn icon ghost') as HTMLButtonElement;
   closeBtn.innerHTML = '&times;';
   closeBtn.setAttribute('aria-label', 'Close');
   closeBtn.addEventListener('click', closeTheoryModal);
@@ -1531,9 +1531,10 @@ function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLE
 
   const stats = el('div', 'report-family-stats');
   const priorityChip = document.createElement('span');
+  priorityChip.className = 'stat';
   priorityChip.textContent = `Priority ${formatImpact(family.impact)}`;
-  if (family.impact >= 3) priorityChip.classList.add('chip-bad');
-  else if (family.impact >= 1.5) priorityChip.classList.add('chip-warn');
+  if (family.impact >= 3) priorityChip.classList.add('bad');
+  else if (family.impact >= 1.5) priorityChip.classList.add('warn');
   priorityChip.classList.add('tooltip-wide');
   priorityChip.setAttribute(
     'data-tooltip',
@@ -1541,9 +1542,10 @@ function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLE
   );
 
   const winChip = document.createElement('span');
+  winChip.className = 'stat';
   winChip.textContent = `Win ${family.winRate}%`;
-  if (family.winRate >= 55) winChip.classList.add('chip-good');
-  else if (family.winRate <= 45) winChip.classList.add('chip-bad');
+  if (family.winRate >= 55) winChip.classList.add('good');
+  else if (family.winRate <= 45) winChip.classList.add('bad');
   winChip.setAttribute(
     'data-tooltip',
     `Opening record: ${family.wdl.wins}W ${family.wdl.draws}D ${family.wdl.losses}L (${family.wdl.total} games).`,
@@ -1551,10 +1553,11 @@ function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLE
   winChip.classList.add('tooltip-wide');
 
   const deltaChip = document.createElement('span');
+  deltaChip.className = 'stat';
   const familyElo = eloSwingForWdl(family.wdl);
   deltaChip.textContent = `~Elo Δ${formatSignedNum(familyElo)}`;
-  if (familyElo > 0) deltaChip.classList.add('chip-good');
-  else if (familyElo < 0) deltaChip.classList.add('chip-bad');
+  if (familyElo > 0) deltaChip.classList.add('good');
+  else if (familyElo < 0) deltaChip.classList.add('bad');
   deltaChip.classList.add('tooltip-wide');
   deltaChip.setAttribute(
     'data-tooltip',
@@ -1953,24 +1956,27 @@ function renderWeaknessQueue(parent: HTMLElement, lines: OpeningLine[]): void {
 
     const stats = el('div', 'report-weakness-stats');
     const adjChip = document.createElement('span');
+    adjChip.className = 'stat';
     adjChip.textContent = `Win ${line.winRate}%`;
-    if (line.winRate >= 55) adjChip.classList.add('chip-good');
-    else if (line.winRate <= 45) adjChip.classList.add('chip-bad');
+    if (line.winRate >= 55) adjChip.classList.add('good');
+    else if (line.winRate <= 45) adjChip.classList.add('bad');
     adjChip.setAttribute('data-tooltip', winRateTooltip(line));
     adjChip.classList.add('tooltip-wide');
 
     const expChip = document.createElement('span');
+    expChip.className = 'stat';
     const elo = eloSwingForLine(line);
     expChip.textContent = `~Elo Δ${formatSignedNum(elo)}`;
-    if (elo > 0) expChip.classList.add('chip-good');
-    else if (elo < 0) expChip.classList.add('chip-bad');
+    if (elo > 0) expChip.classList.add('good');
+    else if (elo < 0) expChip.classList.add('bad');
     expChip.setAttribute('data-tooltip', eloSwingTooltip(line));
     expChip.classList.add('tooltip-wide');
 
     const impactChip = document.createElement('span');
+    impactChip.className = 'stat';
     impactChip.textContent = `Priority ${formatImpact(line.impact)}`;
-    if (line.impact >= 3) impactChip.classList.add('chip-bad');
-    else if (line.impact >= 1.5) impactChip.classList.add('chip-warn');
+    if (line.impact >= 3) impactChip.classList.add('bad');
+    else if (line.impact >= 1.5) impactChip.classList.add('warn');
     impactChip.setAttribute('data-tooltip', impactTooltip(line));
     impactChip.classList.add('tooltip-wide');
     impactChip.classList.add('tooltip-preline');
@@ -2043,16 +2049,18 @@ function buildHighlightCard(line: OpeningLine): HTMLElement {
 
   const stats = el('div', 'report-highlight-stats');
   const adj = document.createElement('span');
+  adj.className = 'stat';
   adj.textContent = `Win ${line.winRate}%`;
-  if (line.winRate >= 55) adj.classList.add('chip-good');
-  else if (line.winRate <= 45) adj.classList.add('chip-bad');
+  if (line.winRate >= 55) adj.classList.add('good');
+  else if (line.winRate <= 45) adj.classList.add('bad');
   adj.setAttribute('data-tooltip', winRateTooltip(line));
   adj.classList.add('tooltip-wide');
   const exp = document.createElement('span');
+  exp.className = 'stat';
   const hElo = eloSwingForLine(line);
   exp.textContent = `~Elo Δ${formatSignedNum(hElo)}`;
-  if (hElo > 0) exp.classList.add('chip-good');
-  else if (hElo < 0) exp.classList.add('chip-bad');
+  if (hElo > 0) exp.classList.add('good');
+  else if (hElo < 0) exp.classList.add('bad');
   exp.setAttribute('data-tooltip', eloSwingTooltip(line));
   exp.classList.add('tooltip-wide');
   stats.append(adj, exp);

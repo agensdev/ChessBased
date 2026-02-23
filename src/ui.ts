@@ -16,11 +16,10 @@ import { getMoveHistory, getViewIndex, isViewingHistory, navigateTo, setAutoShap
 import {
   isMoveLocked, lockMove, unlockMove, getLockedMoves,
   getOpeningNames, getActiveOpening, switchOpening, createOpening, deleteOpening, renameOpening,
-  mergeOpenings,
+  mergeMultiple,
   FREE_PLAY_NAME,
   FULL_REPERTOIRE_NAME,
 } from './repertoire';
-import type { MergeStrategy } from './repertoire';
 import { importPgn, fetchStudyPgn } from './pgn-import';
 import { initLibraryModal, openLibraryModal } from './opening-library';
 import { findOpeningByEco, findPgnByEco } from './opening-index';
@@ -42,6 +41,7 @@ import {
   type ExplorerMode, type Platform, type LichessFilters, type GameMeta,
 } from './personal-explorer';
 import { openReportPage, isReportPageOpen } from './report-ui';
+import { confirmModal, type ConfirmButton } from './confirm';
 
 type ContinueCallback = () => void;
 type OpeningChangeCallback = () => void;
@@ -105,6 +105,7 @@ export function initUI(
   renderConfigPanel();
   initHelpModal();
   initTooltips();
+  document.addEventListener('click', () => closeAllDropdowns());
 }
 
 function setHistoryLinesView(view: HistoryLinesView): void {
@@ -137,9 +138,8 @@ function initHistoryLinesToggle(): void {
   setHistoryLinesView(historyLinesView);
 }
 
-type PickerMode = 'normal' | 'rename' | 'confirm-delete' | 'merge-select' | 'merge-confirm';
+type PickerMode = 'normal' | 'rename' | 'merge-select';
 let pickerMode: PickerMode = 'normal';
-let mergeTarget: string | null = null;
 
 export function renderSystemPicker(): void {
   const el = document.getElementById('system-picker')!;
@@ -148,14 +148,10 @@ export function renderSystemPicker(): void {
   const active = getActiveOpening();
   const isFreePlay = active === FREE_PLAY_NAME;
 
-  if (pickerMode === 'rename' && !isFreePlay) {
-    renderRenameMode(el, active);
-  } else {
-    if (pickerMode !== 'merge-select' && pickerMode !== 'merge-confirm') {
-      pickerMode = 'normal';
-    }
-    renderNormalMode(el, active, isFreePlay);
+  if (pickerMode !== 'merge-select' && pickerMode !== 'rename') {
+    pickerMode = 'normal';
   }
+  renderNormalMode(el, active, isFreePlay);
 
   renderRepertoireActions();
 }
@@ -172,7 +168,7 @@ function renderRepertoireActions(): void {
   primaryRow.className = 'repertoire-primary-row';
 
   const libraryBtn = document.createElement('button');
-  libraryBtn.className = 'repertoire-action-btn';
+  libraryBtn.className = 'btn';
   libraryBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg> Browse openings';
   libraryBtn.setAttribute('data-tooltip', 'Browse common openings to add');
   libraryBtn.addEventListener('click', () => {
@@ -186,41 +182,68 @@ function renderRepertoireActions(): void {
   });
 
   const importBtn = document.createElement('button');
-  importBtn.className = 'repertoire-action-btn';
+  importBtn.className = 'btn';
   importBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Import PGN';
   importBtn.setAttribute('data-tooltip', 'Import from PGN or Lichess study');
   importBtn.addEventListener('click', () => openPgnModal());
 
   primaryRow.append(libraryBtn, importBtn);
 
-  const linkRow = document.createElement('div');
-  linkRow.className = 'repertoire-btn-row';
+  const overflowWrap = document.createElement('div');
+  overflowWrap.className = 'overflow-btn-wrap';
 
-  const exportBtn = document.createElement('button');
-  exportBtn.className = 'import-pgn-btn';
-  exportBtn.textContent = 'Copy PGN';
-  exportBtn.disabled = isFreePlay;
-  exportBtn.addEventListener('click', () => {
+  const overflowBtn = document.createElement('button');
+  overflowBtn.className = 'btn icon';
+  overflowBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+  overflowBtn.setAttribute('data-tooltip', 'More actions');
+
+  const overflowMenu = document.createElement('div');
+  overflowMenu.className = 'overflow-menu';
+
+  const copyItem = document.createElement('button');
+  copyItem.className = 'overflow-menu-item';
+  copyItem.textContent = 'Copy PGN';
+  copyItem.disabled = isFreePlay;
+  copyItem.addEventListener('click', () => {
     const pgn = exportActiveOpening();
     if (!pgn) return;
     navigator.clipboard.writeText(pgn).then(() => {
-      const orig = exportBtn.textContent;
-      exportBtn.textContent = 'Copied!';
-      setTimeout(() => { exportBtn.textContent = orig; }, 1500);
+      const orig = copyItem.textContent;
+      copyItem.textContent = 'Copied!';
+      setTimeout(() => { copyItem.textContent = orig; }, 1500);
     });
+    overflowMenu.classList.remove('visible');
   });
 
-  const exportAllBtn = document.createElement('button');
-  exportAllBtn.className = 'import-pgn-btn';
-  exportAllBtn.textContent = 'Export repertoire';
-  exportAllBtn.addEventListener('click', () => downloadPgn(exportAll(), 'repertoire.pgn'));
+  const exportAllItem = document.createElement('button');
+  exportAllItem.className = 'overflow-menu-item';
+  exportAllItem.textContent = 'Export repertoire';
+  exportAllItem.addEventListener('click', () => {
+    downloadPgn(exportAll(), 'repertoire.pgn');
+    overflowMenu.classList.remove('visible');
+  });
 
-  linkRow.append(exportBtn, exportAllBtn);
+  overflowMenu.append(copyItem, exportAllItem);
 
-  el.append(primaryRow, linkRow);
+  overflowBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !overflowMenu.classList.contains('visible');
+    overflowMenu.classList.toggle('visible');
+    if (opening) {
+      const close = () => {
+        overflowMenu.classList.remove('visible');
+        document.removeEventListener('click', close);
+      };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    }
+  });
+
+  overflowWrap.append(overflowBtn, overflowMenu);
+  primaryRow.append(overflowWrap);
+
+  el.append(primaryRow);
 }
 
-const SVG_CHECK = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
 const SVG_EDIT = '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
 const SVG_TRASH = '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
 const SVG_PLUS = '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>';
@@ -231,9 +254,11 @@ const SVG_LAYERS = '<svg viewBox="0 0 24 24"><path d="M11.99 18.54l-7.37-5.73L3 
 const SVG_MERGE = '<svg viewBox="0 0 24 24"><path d="M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41zM7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5 7.5 8z"/></svg>';
 const SVG_CHEVRON = '<svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>';
 const SVG_CLOSE = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+const SVG_CHECK = '<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
 
-let deleteTarget: string | null = null;
 let dropdownOpen = false;
+let mergeSelected: Set<string> = new Set();
+let dropdownOutsideClickCleanup: (() => void) | null = null;
 
 function makeCardIcon(type: 'free-play' | 'full-rep' | 'custom'): HTMLElement {
   const icon = document.createElement('div');
@@ -256,6 +281,10 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   const isFullRepActive = active === FULL_REPERTOIRE_NAME;
   const isCustomActive = !isFreePlayActive && !isFullRepActive;
 
+  // Clean up stale outside-click listener from previous render
+  dropdownOutsideClickCleanup?.();
+  dropdownOutsideClickCleanup = null;
+
   // ── Single dropdown card ──
   const wrapper = document.createElement('div');
   wrapper.className = 'system-dropdown-anchor';
@@ -266,10 +295,48 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
   const activeIconType = isFreePlayActive ? 'free-play' : isFullRepActive ? 'full-rep' : 'custom';
   card.append(makeCardIcon(activeIconType));
 
-  const nameEl = document.createElement('div');
-  nameEl.className = 'system-card-name';
-  nameEl.textContent = active;
-  card.append(nameEl);
+  const isRenaming = pickerMode === 'rename' && isCustomActive;
+
+  if (isRenaming) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'system-card-rename-input';
+    input.value = active;
+    input.placeholder = 'Opening name...';
+
+    function saveRename(): void {
+      const newName = input.value.trim();
+      if (newName && newName !== active) {
+        renameOpening(active, newName);
+        openingChangeCb?.();
+      }
+      pickerMode = 'normal';
+      renderSystemPicker();
+    }
+
+    function cancelRename(): void {
+      pickerMode = 'normal';
+      renderSystemPicker();
+    }
+
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') saveRename();
+      if (e.key === 'Escape') cancelRename();
+    });
+    input.addEventListener('blur', saveRename);
+
+    card.append(input);
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  } else {
+    const nameEl = document.createElement('div');
+    nameEl.className = 'system-card-name';
+    nameEl.textContent = active;
+    card.append(nameEl);
+  }
 
   // Inline icon actions for custom openings
   if (isCustomActive) {
@@ -278,7 +345,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     const renameBtn = document.createElement('button');
     renameBtn.className = 'system-card-action-btn';
-    renameBtn.title = 'Rename';
+    renameBtn.setAttribute('data-tooltip', 'Rename');
     renameBtn.innerHTML = SVG_EDIT;
     renameBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -289,7 +356,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     const mergeBtn = document.createElement('button');
     mergeBtn.className = 'system-card-action-btn';
-    mergeBtn.title = 'Merge';
+    mergeBtn.setAttribute('data-tooltip', 'Merge openings');
     mergeBtn.innerHTML = SVG_MERGE;
     const customCount = names.filter(n => n !== FREE_PLAY_NAME).length;
     if (customCount < 2) {
@@ -297,6 +364,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
     }
     mergeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      mergeSelected = new Set([active]);
       pickerMode = 'merge-select';
       dropdownOpen = true;
       renderSystemPicker();
@@ -304,13 +372,26 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'system-card-action-btn danger';
-    deleteBtn.title = 'Delete';
+    deleteBtn.setAttribute('data-tooltip', 'Delete opening');
     deleteBtn.innerHTML = SVG_TRASH;
-    deleteBtn.addEventListener('click', (e) => {
+    deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      const anchorRect = deleteBtn.getBoundingClientRect();
       dropdownOpen = false;
-      deleteTarget = active;
       renderSystemPicker();
+      const result = await confirmModal({
+        title: `Delete "${active}"?`,
+        message: 'This will permanently remove this opening and all its locked moves.',
+        buttons: [{ label: 'Delete', value: 'delete', style: 'danger' }],
+        danger: true,
+        anchor: anchorRect,
+      });
+      if (result === 'delete') {
+        deleteOpening(active);
+        pickerMode = 'normal';
+        openingChangeCb?.();
+        renderSystemPicker();
+      }
     });
 
     actions.append(renameBtn, mergeBtn, deleteBtn);
@@ -341,43 +422,102 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
           if (!wrapper.contains(e.target as Node)) {
             dropdownOpen = false;
             if (pickerMode === 'merge-select') pickerMode = 'normal';
-            document.removeEventListener('click', onClickOutside, true);
+            cleanup();
             renderSystemPicker();
           }
         };
+        function cleanup() {
+          document.removeEventListener('click', onClickOutside, true);
+          dropdownOutsideClickCleanup = null;
+        }
         document.addEventListener('click', onClickOutside, true);
+        dropdownOutsideClickCleanup = cleanup;
       });
 
       const dropdown = document.createElement('div');
       dropdown.className = 'system-dropdown';
 
       if (pickerMode === 'merge-select') {
-        // Merge-select: header + list of merge targets + cancel
+        // Merge-select: header + checkboxes for all custom openings + merge/cancel
         const header = document.createElement('div');
         header.className = 'system-dropdown-header';
-        header.textContent = `Merge with…`;
+        header.textContent = 'Select openings to merge';
         dropdown.append(header);
 
-        const mergeTargets = customRepertoires.filter(n => n !== active);
-        for (const name of mergeTargets) {
+        for (const name of customRepertoires) {
+          const checked = mergeSelected.has(name);
           const item = document.createElement('div');
           item.className = 'system-dropdown-item';
 
-          item.append(makeCardIcon('custom'));
+          const check = document.createElement('div');
+          check.className = 'system-card-check';
+          if (checked) check.classList.add('checked');
+          check.innerHTML = SVG_CHECK;
+          check.querySelector('svg')!.setAttribute('width', '10');
+          check.querySelector('svg')!.setAttribute('height', '10');
+          check.querySelector('svg')!.style.fill = '#fff';
+          check.querySelector('svg')!.style.opacity = checked ? '1' : '0';
+          item.append(check);
 
           const itemName = document.createElement('div');
           itemName.className = 'system-card-name';
           itemName.textContent = name;
           item.append(itemName);
 
-          item.addEventListener('click', () => {
-            mergeTarget = name;
-            dropdownOpen = false;
-            pickerMode = 'merge-confirm';
-            renderSystemPicker();
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (mergeSelected.has(name)) {
+              mergeSelected.delete(name);
+            } else {
+              mergeSelected.add(name);
+            }
+            // Update checkbox in-place
+            const isNowChecked = mergeSelected.has(name);
+            check.classList.toggle('checked', isNowChecked);
+            check.querySelector('svg')!.style.opacity = isNowChecked ? '1' : '0';
+            // Update merge button
+            updateMergeAction();
           });
           dropdown.append(item);
         }
+
+        // Merge button
+        const mergeAction = document.createElement('div');
+        mergeAction.className = 'system-dropdown-item system-dropdown-add';
+        mergeAction.innerHTML = `${SVG_MERGE} <span class="system-card-name">Merge ${mergeSelected.size} openings</span>`;
+        mergeAction.querySelector('svg')!.setAttribute('width', '14');
+        mergeAction.querySelector('svg')!.setAttribute('height', '14');
+        mergeAction.querySelector('svg')!.style.fill = 'currentColor';
+
+        function updateMergeAction() {
+          const count = mergeSelected.size;
+          mergeAction.querySelector('.system-card-name')!.textContent = `Merge ${count} openings`;
+          mergeAction.style.opacity = count < 2 ? '0.4' : '';
+          mergeAction.style.pointerEvents = count < 2 ? 'none' : '';
+        }
+        updateMergeAction();
+        mergeAction.addEventListener('click', async () => {
+          const selectedNames = [...mergeSelected];
+          dropdownOpen = false;
+          pickerMode = 'normal';
+          renderSystemPicker();
+
+          const buttons: ConfirmButton[] = selectedNames.map(n => ({ label: n, value: n }));
+          buttons.push({ label: 'New opening', value: '__new__', style: 'primary' });
+
+          const result = await confirmModal({
+            title: 'Merge into\u2026',
+            message: 'Choose which name to keep. All locked moves will be combined and the rest deleted.',
+            buttons,
+            layout: 'vertical',
+          });
+          if (result) {
+            mergeMultiple(selectedNames, result === '__new__' ? null : result);
+            openingChangeCb?.();
+            renderSystemPicker();
+          }
+        });
+        dropdown.append(mergeAction);
 
         const cancelItem = document.createElement('div');
         cancelItem.className = 'system-dropdown-item system-dropdown-cancel';
@@ -387,7 +527,6 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
         cancelItem.querySelector('svg')!.style.fill = 'currentColor';
         cancelItem.addEventListener('click', () => {
           dropdownOpen = false;
-          mergeTarget = null;
           pickerMode = 'normal';
           renderSystemPicker();
         });
@@ -426,7 +565,6 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
           fpName.textContent = FREE_PLAY_NAME;
           fpItem.append(fpName);
           fpItem.addEventListener('click', () => {
-            deleteTarget = null;
             dropdownOpen = false;
             switchOpening(FREE_PLAY_NAME);
             openingChangeCb?.();
@@ -445,7 +583,6 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
           frName.textContent = FULL_REPERTOIRE_NAME;
           frItem.append(frName);
           frItem.addEventListener('click', () => {
-            deleteTarget = null;
             dropdownOpen = false;
             switchOpening(FULL_REPERTOIRE_NAME);
             openingChangeCb?.();
@@ -475,7 +612,6 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
           item.append(itemName);
 
           item.addEventListener('click', () => {
-            deleteTarget = null;
             dropdownOpen = false;
             switchOpening(name);
             openingChangeCb?.();
@@ -491,151 +627,7 @@ function renderNormalMode(el: HTMLElement, active: string, _isFreePlay: boolean)
 
     el.append(wrapper);
 
-  // Confirm-delete banner
-  if (deleteTarget) {
-    const banner = document.createElement('div');
-    banner.className = 'system-confirm-delete';
-    const txt = document.createElement('span');
-    txt.textContent = `Delete "${deleteTarget}"?`;
 
-    const yesBtn = document.createElement('button');
-    yesBtn.className = 'btn-confirm-yes';
-    yesBtn.textContent = 'Delete';
-    yesBtn.addEventListener('click', () => {
-      deleteOpening(deleteTarget!);
-      deleteTarget = null;
-      pickerMode = 'normal';
-      openingChangeCb?.();
-      renderSystemPicker();
-    });
-
-    const noBtn = document.createElement('button');
-    noBtn.className = 'btn-confirm-no';
-    noBtn.textContent = 'Cancel';
-    noBtn.addEventListener('click', () => {
-      deleteTarget = null;
-      renderSystemPicker();
-    });
-
-    banner.append(txt, yesBtn, noBtn);
-    el.append(banner);
-  }
-
-  // Merge-confirm banner
-  if (pickerMode === 'merge-confirm' && mergeTarget) {
-    const banner = document.createElement('div');
-    banner.className = 'system-confirm-merge';
-
-    const txt = document.createElement('span');
-    txt.textContent = `Merge "${active}" + "${mergeTarget}"`;
-    banner.append(txt);
-
-    const strategies: { strategy: MergeStrategy; label: string }[] = [
-      { strategy: 'into-a', label: `Keep "${active}"` },
-      { strategy: 'into-b', label: `Keep "${mergeTarget}"` },
-      { strategy: 'as-new', label: 'New opening' },
-    ];
-
-    const btnGroup = document.createElement('div');
-    btnGroup.className = 'merge-btn-group';
-    for (const { strategy, label } of strategies) {
-      const btn = document.createElement('button');
-      btn.className = 'btn-confirm-yes merge';
-      btn.textContent = label;
-      btn.addEventListener('click', () => {
-        mergeOpenings(active, mergeTarget!, strategy);
-        mergeTarget = null;
-        pickerMode = 'normal';
-        openingChangeCb?.();
-        renderSystemPicker();
-      });
-      btnGroup.append(btn);
-    }
-    banner.append(btnGroup);
-
-    const noBtn = document.createElement('button');
-    noBtn.className = 'btn-confirm-no';
-    noBtn.textContent = 'Cancel';
-    noBtn.addEventListener('click', () => {
-      mergeTarget = null;
-      pickerMode = 'normal';
-      renderSystemPicker();
-    });
-    banner.append(noBtn);
-
-    el.append(banner);
-  }
-
-}
-
-function renderRenameMode(el: HTMLElement, active: string): void {
-  // Free play card (dimmed)
-  const fpCard = document.createElement('div');
-  fpCard.className = 'system-card';
-  fpCard.style.opacity = '0.4';
-  fpCard.style.pointerEvents = 'none';
-  fpCard.append(makeCardIcon('free-play'));
-  const fpName = document.createElement('div');
-  fpName.className = 'system-card-name';
-  fpName.textContent = FREE_PLAY_NAME;
-  fpCard.append(fpName);
-  el.append(fpCard);
-
-  // Rename input row
-  const row = document.createElement('div');
-  row.className = 'system-rename-row';
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'system-rename-input';
-  input.value = active;
-  input.placeholder = 'Opening name...';
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'system-icon-btn';
-  saveBtn.title = 'Save';
-  saveBtn.innerHTML = SVG_CHECK;
-  saveBtn.style.width = '32px';
-  saveBtn.style.height = '32px';
-  saveBtn.style.color = 'var(--opportunity)';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'system-icon-btn';
-  cancelBtn.title = 'Cancel';
-  cancelBtn.innerHTML = SVG_CLOSE;
-  cancelBtn.style.width = '32px';
-  cancelBtn.style.height = '32px';
-
-  function save(): void {
-    const newName = input.value.trim();
-    if (newName && newName !== active) {
-      renameOpening(active, newName);
-      openingChangeCb?.();
-    }
-    pickerMode = 'normal';
-    renderSystemPicker();
-  }
-
-  function cancel(): void {
-    pickerMode = 'normal';
-    renderSystemPicker();
-  }
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') save();
-    if (e.key === 'Escape') cancel();
-  });
-
-  saveBtn.addEventListener('click', save);
-  cancelBtn.addEventListener('click', cancel);
-
-  row.append(input, saveBtn, cancelBtn);
-  el.append(row);
-
-  requestAnimationFrame(() => {
-    input.focus();
-    input.select();
-  });
 }
 
 
@@ -703,67 +695,18 @@ const ALERT_META: { type: AlertType; label: string; cls: string }[] = [
 ];
 
 
-function openDrawer(): void {
-  const overlay = document.getElementById('settings-drawer-overlay')!;
-  const drawer = document.getElementById('settings-drawer')!;
-  overlay.classList.remove('hidden');
-  drawer.classList.remove('hidden');
-  // Trigger reflow for animation
-  void drawer.offsetHeight;
-  overlay.classList.add('visible');
-  drawer.classList.add('visible');
-}
-
-function closeDrawer(): void {
-  const overlay = document.getElementById('settings-drawer-overlay')!;
-  const drawer = document.getElementById('settings-drawer')!;
-  overlay.classList.remove('visible');
-  drawer.classList.remove('visible');
-  setTimeout(() => {
-    overlay.classList.add('hidden');
-    drawer.classList.add('hidden');
-  }, 300);
-}
-
-let drawerInitialized = false;
-function initDrawer(): void {
-  if (drawerInitialized) return;
-  drawerInitialized = true;
-  document.getElementById('drawer-close')!.addEventListener('click', closeDrawer);
-  document.getElementById('settings-drawer-overlay')!.addEventListener('click', closeDrawer);
-}
-
 function renderConfigPanel(): void {
-  // ── Inline config (always visible in left sidebar) ──
   const inlineEl = document.getElementById('config-inline')!;
   inlineEl.innerHTML = '';
 
-  // ── Indicators section ──
-  const indicatorSection = document.createElement('div');
-  indicatorSection.className = 'config-toggle-section';
-
-  const indicatorHeader = document.createElement('div');
-  indicatorHeader.className = 'config-toggle-header';
-  indicatorHeader.innerHTML = `<span class="config-toggle-title">Display</span>`;
-
-  const indicatorInfo = document.createElement('div');
-  indicatorInfo.className = 'info-icon-wrap';
-  indicatorInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const indicatorTooltip = document.createElement('div');
-  indicatorTooltip.className = 'info-tooltip';
-  indicatorTooltip.innerHTML =
-    'Visual aids to help you understand positions.<br><br>' +
-    '<b>Eval bar</b> — Stockfish evaluation shown as a vertical bar next to the board.<br>' +
-    '<b>Move badges</b> — Marks on moves: <b>!</b> for best move, <b>?</b> for blunders, <b>?!</b> for traps.<br>' +
-    '<b>Always show explorer</b> — Show explorer moves even during training (normally hidden until you click).';
-  indicatorInfo.append(indicatorTooltip);
-  indicatorHeader.append(indicatorInfo);
+  // ── Display chips ──
+  const displaySection = document.createElement('div');
+  displaySection.className = 'config-toggle-section';
 
   const displayGrid = document.createElement('div');
   displayGrid.className = 'chip-grid';
 
   const evalChip = document.createElement('button');
-  evalChip.id = 'eval-chip';
   evalChip.className = `chip${currentConfig.showEval ? ' selected' : ''}`;
   evalChip.textContent = 'Eval bar';
   evalChip.setAttribute('data-tooltip', 'Stockfish evaluation bar next to the board');
@@ -807,266 +750,116 @@ function renderConfigPanel(): void {
   });
 
   displayGrid.append(evalChip, badgesChip, explorerChip, engineLinesChip);
-  indicatorSection.append(indicatorHeader, displayGrid);
+  displaySection.append(displayGrid);
 
-  // ── Alerts section ──
-  const alertSection = document.createElement('div');
-  alertSection.className = 'config-toggle-section';
+  // ── Dropdowns row (Ratings + Time controls + Help) ──
+  const dropdownRow = document.createElement('div');
+  dropdownRow.className = 'settings-dropdown-row';
 
-  const alertHeader = document.createElement('div');
-  alertHeader.className = 'config-toggle-header';
-  alertHeader.innerHTML = `<span class="config-toggle-title">Alerts</span>`;
-
-  const alertInfo = document.createElement('div');
-  alertInfo.className = 'info-icon-wrap';
-  alertInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const alertTooltip = document.createElement('div');
-  alertTooltip.className = 'info-tooltip';
-  alertTooltip.innerHTML =
-    'Warnings that appear on your turn at critical moments.<br><br>' +
-    '<b>Danger</b> — Most moves lose ground here. Don\'t mess up!<br>' +
-    '<b>Opportunity</b> — One move clearly outperforms the rest.<br>' +
-    '<b>Trap</b> — A popular move is actually a mistake.';
-  alertInfo.append(alertTooltip);
-  alertHeader.append(alertInfo);
-
-  const alertGrid = document.createElement('div');
-  alertGrid.className = 'alert-toggle-grid';
-  const alertTooltips: Record<string, string> = {
-    danger: 'Warn when most moves lose ground',
-    opportunity: 'Highlight when one move stands out',
-    trap: 'Flag popular moves that are actually mistakes',
-  };
-  for (const meta of ALERT_META) {
-    const chip = document.createElement('button');
-    const isOn = currentConfig.enabledAlerts.includes(meta.type);
-    chip.className = `alert-chip ${meta.cls}${isOn ? ' selected' : ''}`;
-    chip.textContent = meta.label;
-    chip.setAttribute('data-tooltip', alertTooltips[meta.type]);
-    chip.addEventListener('click', () => {
-      const wasOn = chip.classList.contains('selected');
-      chip.classList.toggle('selected');
-      if (wasOn) {
-        currentConfig.enabledAlerts = currentConfig.enabledAlerts.filter(t => t !== meta.type);
-      } else {
-        if (!currentConfig.enabledAlerts.includes(meta.type)) {
-          currentConfig.enabledAlerts.push(meta.type);
-        }
-      }
+  const ratingsDropdown = renderMultiDropdown(
+    'Ratings',
+    RATING_OPTIONS.map(r => ({ value: String(r), label: String(r) })),
+    currentConfig.ratings.map(String),
+    (selected) => {
+      currentConfig.ratings = selected.map(Number).sort((a, b) => a - b);
       configChangeCb(currentConfig);
-    });
-    alertGrid.append(chip);
-  }
-  alertSection.append(alertHeader, alertGrid);
+    },
+    summarizeRatings,
+  );
 
-  // Settings button to open drawer
-  const settingsBtn = document.createElement('button');
-  settingsBtn.className = 'settings-btn';
-  settingsBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.61 3.61 0 0112 15.6z"/></svg> Settings';
-  settingsBtn.addEventListener('click', () => {
-    renderDrawerContent();
-    openDrawer();
-  });
+  const speedsDropdown = renderMultiDropdown(
+    'Time controls',
+    SPEED_OPTIONS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) })),
+    currentConfig.speeds,
+    (selected) => {
+      currentConfig.speeds = selected;
+      configChangeCb(currentConfig);
+    },
+    summarizeSpeeds,
+  );
 
-  inlineEl.append(indicatorSection, settingsBtn);
+  const helpIconBtn = document.createElement('button');
+  helpIconBtn.className = 'btn icon';
+  helpIconBtn.textContent = '?';
+  helpIconBtn.setAttribute('data-tooltip', 'Help & guide');
+  helpIconBtn.addEventListener('click', openHelpModal);
 
-  // Wire up drawer close handlers (once)
-  initDrawer();
+  dropdownRow.append(ratingsDropdown, speedsDropdown, helpIconBtn);
+
+  inlineEl.append(displaySection, dropdownRow);
 }
 
-function renderDrawerContent(): void {
-  const el = document.getElementById('config-panel')!;
-  el.innerHTML = '';
-
-  // ── Explorer Settings ──
-  const explorerHeader = document.createElement('h3');
-  explorerHeader.className = 'config-section';
-  explorerHeader.textContent = 'Explorer';
-  explorerHeader.style.fontSize = '14px';
-  explorerHeader.style.textTransform = 'uppercase';
-  explorerHeader.style.letterSpacing = '0.06em';
-  explorerHeader.style.color = 'var(--text-muted)';
-  explorerHeader.style.marginBottom = '12px';
-  el.append(explorerHeader);
-
-  // Top moves
-  const topNSection = document.createElement('div');
-  topNSection.className = 'config-section';
-  const topNHeader = document.createElement('div');
-  topNHeader.className = 'config-toggle-header';
-  const topNLabel = document.createElement('h3');
-  topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
-  topNLabel.style.margin = '0';
-  const topNInfo = document.createElement('div');
-  topNInfo.className = 'info-icon-wrap';
-  topNInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const topNTooltip = document.createElement('div');
-  topNTooltip.className = 'info-tooltip';
-  topNTooltip.textContent = 'Bot plays from this many of the most popular moves.';
-  topNInfo.append(topNTooltip);
-  topNHeader.append(topNLabel, topNInfo);
-  const topNSlider = document.createElement('input');
-  topNSlider.type = 'range';
-  topNSlider.min = '1';
-  topNSlider.max = '10';
-  topNSlider.value = String(currentConfig.topMoves);
-  topNSlider.addEventListener('input', () => {
-    currentConfig.topMoves = parseInt(topNSlider.value);
-    topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
-    configChangeCb(currentConfig);
-  });
-  topNSection.append(topNHeader, topNSlider);
-
-  // Bot min play rate
-  const playRateSection = document.createElement('div');
-  playRateSection.className = 'config-section';
-  const playRateHeader = document.createElement('div');
-  playRateHeader.className = 'config-toggle-header';
-  const playRateLabel = document.createElement('h3');
-  playRateLabel.textContent = `Bot min play rate: ${currentConfig.botMinPlayRatePct}%`;
-  playRateLabel.style.margin = '0';
-  const playRateInfo = document.createElement('div');
-  playRateInfo.className = 'info-icon-wrap';
-  playRateInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const playRateTooltip = document.createElement('div');
-  playRateTooltip.className = 'info-tooltip';
-  playRateTooltip.textContent = 'Bot only plays moves above this popularity threshold.';
-  playRateInfo.append(playRateTooltip);
-  playRateHeader.append(playRateLabel, playRateInfo);
-  const playRateSlider = document.createElement('input');
-  playRateSlider.type = 'range';
-  playRateSlider.min = '1';
-  playRateSlider.max = '30';
-  playRateSlider.value = String(currentConfig.botMinPlayRatePct);
-  playRateSlider.addEventListener('input', () => {
-    currentConfig.botMinPlayRatePct = parseInt(playRateSlider.value);
-    playRateLabel.textContent = `Bot min play rate: ${currentConfig.botMinPlayRatePct}%`;
-    configChangeCb(currentConfig);
-  });
-  playRateSection.append(playRateHeader, playRateSlider);
-
-  // Bot move selection
-  const weightingSection = document.createElement('div');
-  weightingSection.className = 'config-section';
-  const weightingHeader = document.createElement('div');
-  weightingHeader.className = 'config-toggle-header';
-  const weightingLabel = document.createElement('h3');
-  weightingLabel.textContent = 'Bot move selection';
-  weightingLabel.style.margin = '0';
-  const weightingInfo = document.createElement('div');
-  weightingInfo.className = 'info-icon-wrap';
-  weightingInfo.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const weightingTooltip = document.createElement('div');
-  weightingTooltip.className = 'info-tooltip';
-  weightingTooltip.innerHTML = '<b>Weighted</b> — more popular moves are more likely.<br><b>Equal</b> — all qualifying moves equally likely.';
-  weightingInfo.append(weightingTooltip);
-  weightingHeader.append(weightingLabel, weightingInfo);
-  weightingSection.append(weightingHeader);
-
-  const WEIGHTING_OPTIONS: { value: BotWeighting; label: string }[] = [
-    { value: 'weighted', label: 'Weighted' },
-    { value: 'equal', label: 'Equal' },
-  ];
-
-  const weightingSegment = document.createElement('div');
-  weightingSegment.className = 'segment-picker';
-  for (const opt of WEIGHTING_OPTIONS) {
-    const btn = document.createElement('button');
-    btn.className = `segment-btn${currentConfig.botWeighting === opt.value ? ' selected' : ''}`;
-    btn.textContent = opt.label;
-    btn.addEventListener('click', () => {
-      if (currentConfig.botWeighting === opt.value) return;
-      currentConfig.botWeighting = opt.value;
-      weightingSegment.querySelectorAll('.segment-btn').forEach((b) => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      configChangeCb(currentConfig);
-    });
-    weightingSegment.append(btn);
-  }
-  weightingSection.append(weightingSegment);
-
-  // Ratings — chip grid
-  const ratingsSection = document.createElement('div');
-  ratingsSection.className = 'config-section';
-  ratingsSection.innerHTML = '<h3>Ratings</h3>';
-  const ratingsGrid = document.createElement('div');
-  ratingsGrid.className = 'chip-grid';
-  for (const rating of RATING_OPTIONS) {
-    const chip = document.createElement('button');
-    chip.className = `chip${currentConfig.ratings.includes(rating) ? ' selected' : ''}`;
-    chip.textContent = String(rating);
-    chip.addEventListener('click', () => {
-      const isOn = chip.classList.toggle('selected');
-      if (isOn) {
-        if (!currentConfig.ratings.includes(rating)) {
-          currentConfig.ratings.push(rating);
-          currentConfig.ratings.sort((a, b) => a - b);
-        }
-      } else {
-        currentConfig.ratings = currentConfig.ratings.filter((r) => r !== rating);
-      }
-      configChangeCb(currentConfig);
-    });
-    ratingsGrid.append(chip);
-  }
-  ratingsSection.append(ratingsGrid);
-
-  // Speeds — chip grid
-  const speedsSection = document.createElement('div');
-  speedsSection.className = 'config-section';
-  speedsSection.innerHTML = '<h3>Time Controls</h3>';
-  const speedsGrid = document.createElement('div');
-  speedsGrid.className = 'chip-grid';
-  for (const speed of SPEED_OPTIONS) {
-    const chip = document.createElement('button');
-    chip.className = `chip${currentConfig.speeds.includes(speed) ? ' selected' : ''}`;
-    chip.textContent = speed;
-    chip.addEventListener('click', () => {
-      const isOn = chip.classList.toggle('selected');
-      if (isOn) {
-        if (!currentConfig.speeds.includes(speed)) {
-          currentConfig.speeds.push(speed);
-        }
-      } else {
-        currentConfig.speeds = currentConfig.speeds.filter((s) => s !== speed);
-      }
-      configChangeCb(currentConfig);
-    });
-    speedsGrid.append(chip);
-  }
-  speedsSection.append(speedsGrid);
-
-  el.append(topNSection, playRateSection, weightingSection, ratingsSection, speedsSection);
-
-  // ── My Games ──
-  if (hasPersonalData()) {
-    const myGamesHeader = document.createElement('h3');
-    myGamesHeader.className = 'config-section';
-    myGamesHeader.textContent = 'My Games';
-    myGamesHeader.style.fontSize = '14px';
-    myGamesHeader.style.textTransform = 'uppercase';
-    myGamesHeader.style.letterSpacing = '0.06em';
-    myGamesHeader.style.color = 'var(--text-muted)';
-    myGamesHeader.style.marginBottom = '12px';
-    myGamesHeader.style.marginTop = '20px';
-    el.append(myGamesHeader);
-
-    const clearSection = document.createElement('div');
-    clearSection.className = 'config-section';
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'btn btn-danger';
-    clearBtn.textContent = 'Clear imported games';
-    clearBtn.style.width = '100%';
-    clearBtn.addEventListener('click', async () => {
-      await clearPersonalData();
-      personalFiltersOpen = false;
-      updateExplorerPanel();
-      renderDrawerContent();
-    });
-    clearSection.append(clearBtn);
-    el.append(clearSection);
-  }
+function summarizeRatings(selected: string[]): string {
+  if (selected.length === 0) return 'None';
+  if (selected.length === RATING_OPTIONS.length) return 'All';
+  const nums = selected.map(Number).sort((a, b) => a - b);
+  return `${nums[0]}–${nums[nums.length - 1]}`;
 }
+
+function summarizeSpeeds(selected: string[]): string {
+  if (selected.length === 0) return 'None';
+  if (selected.length === SPEED_OPTIONS.length) return 'All';
+  return selected.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ');
+}
+
+function renderMultiDropdown(
+  label: string,
+  options: { value: string; label: string }[],
+  selected: string[],
+  onChange: (selected: string[]) => void,
+  summarize: (selected: string[]) => string,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'multi-dropdown';
+
+  const btn = document.createElement('button');
+  btn.className = 'multi-dropdown-btn';
+  btn.innerHTML = `<span class="multi-dropdown-label">${label}</span><span class="multi-dropdown-summary">${summarize(selected)}</span><svg class="multi-dropdown-chevron" viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
+
+  const panel = document.createElement('div');
+  panel.className = 'multi-dropdown-panel hidden';
+  panel.addEventListener('click', (e) => e.stopPropagation());
+
+  for (const opt of options) {
+    const row = document.createElement('label');
+    row.className = 'multi-dropdown-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selected.includes(opt.value);
+    cb.addEventListener('change', () => {
+      const current = new Set(selected);
+      if (cb.checked) current.add(opt.value);
+      else current.delete(opt.value);
+      selected = Array.from(current);
+      onChange(selected);
+      btn.querySelector('.multi-dropdown-summary')!.textContent = summarize(selected);
+    });
+    const text = document.createElement('span');
+    text.textContent = opt.label;
+    row.append(cb, text);
+    panel.append(row);
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !panel.classList.contains('hidden');
+    closeAllDropdowns();
+    if (!isOpen) {
+      panel.classList.remove('hidden');
+      wrap.classList.add('open');
+    }
+  });
+
+  wrap.append(btn, panel);
+  return wrap;
+}
+
+function closeAllDropdowns(): void {
+  document.querySelectorAll('.multi-dropdown-panel').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('.multi-dropdown').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.explorer-cog-popover').forEach(p => p.classList.add('hidden'));
+}
+
 
 export function updateStatus(phase: GamePhase, openingName?: string): void {
   const el = document.getElementById('status')!;
@@ -1749,7 +1542,7 @@ function renderPersonalFilterPanel(el: HTMLElement): void {
     filters.sinceMonth || filters.untilMonth;
   if (hasActiveFilters) {
     const resetBtn = document.createElement('button');
-    resetBtn.className = 'personal-filter-reset';
+    resetBtn.className = 'btn sm ghost';
     resetBtn.textContent = 'Reset filters';
     resetBtn.addEventListener('click', () => {
       setPersonalFilters({});
@@ -1844,7 +1637,7 @@ function refreshPersonalMoves(): void {
 
   renderMoveRows(moves, fen, null, el);
   renderPersonalColorNote(el);
-  updateRecentGamesPanel();
+  if (!personalFiltersOpen) updateRecentGamesPanel();
 }
 
 function renderPersonalEmptyState(el: HTMLElement): void {
@@ -2199,6 +1992,79 @@ export function updateExplorerPanel(): void {
   if (totalGames > 0) {
     infoBar.innerHTML += `<span class="database-game-count">${formatGames(totalGames)}</span>`;
   }
+
+  // Cog icon for bot settings popover
+  const cogWrap = document.createElement('div');
+  cogWrap.className = 'explorer-cog-wrap';
+  const cogBtn = document.createElement('button');
+  cogBtn.className = 'explorer-cog-btn';
+  cogBtn.title = 'Bot settings';
+  cogBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.61 3.61 0 0112 15.6z"/></svg>';
+
+  const popover = document.createElement('div');
+  popover.className = 'explorer-cog-popover hidden';
+
+  // Top moves slider
+  const topNLabel = document.createElement('label');
+  topNLabel.className = 'cog-popover-label';
+  topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
+  const topNSlider = document.createElement('input');
+  topNSlider.type = 'range';
+  topNSlider.min = '1';
+  topNSlider.max = '10';
+  topNSlider.value = String(currentConfig.topMoves);
+  topNSlider.addEventListener('input', () => {
+    currentConfig.topMoves = parseInt(topNSlider.value);
+    topNLabel.textContent = `Top moves: ${currentConfig.topMoves}`;
+    configChangeCb(currentConfig);
+  });
+
+  // Bot min play rate slider
+  const playRateLabel = document.createElement('label');
+  playRateLabel.className = 'cog-popover-label';
+  playRateLabel.textContent = `Min play rate: ${currentConfig.botMinPlayRatePct}%`;
+  const playRateSlider = document.createElement('input');
+  playRateSlider.type = 'range';
+  playRateSlider.min = '1';
+  playRateSlider.max = '30';
+  playRateSlider.value = String(currentConfig.botMinPlayRatePct);
+  playRateSlider.addEventListener('input', () => {
+    currentConfig.botMinPlayRatePct = parseInt(playRateSlider.value);
+    playRateLabel.textContent = `Min play rate: ${currentConfig.botMinPlayRatePct}%`;
+    configChangeCb(currentConfig);
+  });
+
+  // Bot weighting segment
+  const weightLabel = document.createElement('label');
+  weightLabel.className = 'cog-popover-label';
+  weightLabel.textContent = 'Move selection';
+  const weightSegment = document.createElement('div');
+  weightSegment.className = 'segment-picker segment-sm';
+  for (const opt of [{ value: 'weighted' as BotWeighting, label: 'Weighted' }, { value: 'equal' as BotWeighting, label: 'Equal' }]) {
+    const btn = document.createElement('button');
+    btn.className = `segment-btn${currentConfig.botWeighting === opt.value ? ' selected' : ''}`;
+    btn.textContent = opt.label;
+    btn.addEventListener('click', () => {
+      if (currentConfig.botWeighting === opt.value) return;
+      currentConfig.botWeighting = opt.value;
+      weightSegment.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      configChangeCb(currentConfig);
+    });
+    weightSegment.append(btn);
+  }
+
+  popover.append(topNLabel, topNSlider, playRateLabel, playRateSlider, weightLabel, weightSegment);
+
+  cogBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !popover.classList.contains('hidden');
+    closeAllDropdowns();
+    if (!isOpen) popover.classList.remove('hidden');
+  });
+
+  cogWrap.append(cogBtn, popover);
+  infoBar.append(cogWrap);
   el.append(infoBar);
 
   if (!showContent) {
@@ -2404,7 +2270,27 @@ function renderRecentGames(container: HTMLElement): void {
     refreshRecentGames(refreshBtn);
   });
 
-  header.append(headerToggle, filterBtn, refreshBtn);
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'recent-games-refresh';
+  clearBtn.title = 'Clear imported games';
+  clearBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+  clearBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const result = await confirmModal({
+      title: 'Clear imported games?',
+      message: 'This will remove all imported game data. You can re-import at any time.',
+      buttons: [{ label: 'Clear', value: 'clear', style: 'danger' }],
+      danger: true,
+      anchor: clearBtn,
+    });
+    if (result !== 'clear') return;
+    await clearPersonalData();
+    personalFiltersOpen = false;
+    updateExplorerPanel();
+    updateRecentGamesPanel();
+  });
+
+  header.append(headerToggle, filterBtn, refreshBtn, clearBtn);
   section.append(header);
 
   // Color filter + filter panel
@@ -2962,14 +2848,6 @@ function initTooltips(): void {
 // ── Help Modal ──
 
 function initHelpModal(): void {
-  const inlineEl = document.getElementById('config-inline')!;
-
-  const helpBtn = document.createElement('button');
-  helpBtn.className = 'help-btn';
-  helpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg> Help & guide';
-  helpBtn.addEventListener('click', openHelpModal);
-  inlineEl.append(helpBtn);
-
   document.getElementById('help-close')!.addEventListener('click', closeHelpModal);
   document.getElementById('help-overlay')!.addEventListener('click', closeHelpModal);
 }
@@ -2996,7 +2874,7 @@ type SidebarTab = 'database' | 'personal';
 let activeTab: SidebarTab = 'database';
 
 export function initSidebarTabs(): void {
-  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
+  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .segment-btn');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
       const id = tab.dataset.tab as SidebarTab;
@@ -3011,8 +2889,8 @@ export function initSidebarTabs(): void {
 function applySidebarTab(id: SidebarTab): void {
   activeTab = id;
 
-  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .sidebar-tab');
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+  const tabs = document.querySelectorAll<HTMLButtonElement>('#sidebar-tabs .segment-btn');
+  tabs.forEach(t => t.classList.toggle('selected', t.dataset.tab === id));
 
 
 
@@ -3050,7 +2928,7 @@ export function toggleLockCurrentMove(): void {
 
 export function isAnyModalOpen(): boolean {
   if (isReportPageOpen()) return true;
-  const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal'];
+  const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal', 'confirm-overlay'];
   return modalIds.some(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');

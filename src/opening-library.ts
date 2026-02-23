@@ -285,7 +285,7 @@ function renderOpeningList(
   const listArea = document.getElementById('library-list-area')!;
   if (activeCategory) {
     const back = document.createElement('button');
-    back.className = 'library-back-btn';
+    back.className = 'btn ghost';
     back.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg> All categories';
     back.addEventListener('click', () => {
       activeCategory = null;
@@ -337,7 +337,7 @@ function createListItem(opening: OpeningEntry): HTMLElement {
   info.append(name, meta);
 
   const addBtn = document.createElement('button');
-  addBtn.className = 'library-add-btn';
+  addBtn.className = 'btn sm';
   addBtn.textContent = 'Add';
   addBtn.addEventListener('click', (e) => {
     e.stopPropagation();
