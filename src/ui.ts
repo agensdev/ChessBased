@@ -68,6 +68,9 @@ let nextMoveUci: string | null = null;
 
 // Current engine eval as win% for the side to move (0-100), null if unavailable
 let currentEvalWinPct: number | null = null;
+
+// Currently loaded game for replay mode
+let loadedGame: GameMeta | null = null;
 type HistoryLinesView = 'history' | 'lines';
 let historyLinesView: HistoryLinesView = 'history';
 
@@ -1181,6 +1184,17 @@ export function updateMoveList(): void {
   }
 
   let html = '';
+  if (loadedGame) {
+    const result = userResult(loadedGame);
+    const resultLabel = result === 'win' ? 'W' : result === 'draw' ? 'D' : 'L';
+    const oppName = loadedGame.op ?? 'Opponent';
+    const dateStr = shortDate(loadedGame.da ?? loadedGame.mo);
+    html += `<div class="game-info-banner">` +
+      `<span class="game-info-result ${result}">${resultLabel}</span>` +
+      `<span class="game-info-details">vs ${oppName} (${loadedGame.or}) &middot; ${dateStr}</span>` +
+      `<button class="game-info-dismiss" title="Back to training">&times;</button>` +
+      `</div>`;
+  }
   if (hasRepHit || hasRepMiss) {
     html += '<div class="move-legend">';
     if (hasRepHit) html += '<span class="move-legend-item"><span class="move-legend-dot hit"></span>In repertoire</span>';
@@ -1263,7 +1277,28 @@ export function updateMoveList(): void {
   actionsEl.querySelector('.lock-line-new-btn')
     ?.addEventListener('click', () => lockLineToRepertoire(true));
 
-  el.scrollTop = el.scrollHeight;
+  const bannerEl = el.querySelector('.game-info-banner');
+  if (bannerEl) {
+    bannerEl.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.game-info-dismiss')) {
+        clearLoadedGame();
+        return;
+      }
+      if (loadedGame?.mv) {
+        const line = uciStringToLine(loadedGame.mv);
+        if (line.length > 0) replayLine(line, 0);
+      }
+    });
+  }
+
+  const activeEl = el.querySelector('.move-san.active') as HTMLElement | null;
+  if (activeEl) {
+    activeEl.scrollIntoView({ block: 'nearest' });
+  } else if (loadedGame) {
+    el.scrollTop = 0;
+  } else {
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 export function setNextMoveUci(uci: string | null): void {
@@ -1272,6 +1307,16 @@ export function setNextMoveUci(uci: string | null): void {
 
 export function setEvalWinPct(winPct: number | null): void {
   currentEvalWinPct = winPct;
+}
+
+export function getLoadedGame(): GameMeta | null {
+  return loadedGame;
+}
+
+export function clearLoadedGame(): void {
+  loadedGame = null;
+  updateMoveList();
+  updateRecentGamesPanel();
 }
 
 // Whether explorer content should always be shown (manual mode, history view)
@@ -2476,11 +2521,20 @@ function renderGameRow(game: GameMeta): HTMLDivElement {
   const row = document.createElement('div');
   row.className = 'recent-game-row';
 
+  if (loadedGame === game) {
+    row.classList.add('selected');
+  }
+
   if (game.mv || game.ec) {
     const color = game.uw ? 'white' : 'black';
     row.classList.add('clickable');
     row.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('.recent-game-external')) return;
+      if (loadedGame === game) {
+        clearLoadedGame();
+        newGameCb();
+        return;
+      }
       let line: MoveHistoryEntry[] = [];
       if (game.mv) {
         line = uciStringToLine(game.mv);
@@ -2489,8 +2543,10 @@ function renderGameRow(game: GameMeta): HTMLDivElement {
         if (entry) line = pgnToLine(entry.pgn);
       }
       if (line.length > 0) {
+        loadedGame = game;
         setOrientation(color);
-        replayLine(line);
+        replayLine(line, 0);
+        updateRecentGamesPanel();
       }
     });
   }

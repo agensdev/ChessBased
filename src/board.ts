@@ -300,7 +300,7 @@ export function resetBoard(playerColor: 'white' | 'black'): void {
   });
 }
 
-export function replayLine(line: MoveHistoryEntry[]): void {
+export function replayLine(line: MoveHistoryEntry[], startIndex?: number): void {
   if (!state) return;
 
   const chess = Chess.default();
@@ -315,8 +315,9 @@ export function replayLine(line: MoveHistoryEntry[]): void {
 
   state.chess = chess;
   state.moveHistory = history;
-  viewIndex = history.length;
-  syncBoard();
+  viewIndex = startIndex != null ? Math.min(startIndex, history.length) : history.length;
+  if (viewIndex < history.length) showViewPosition();
+  else syncBoard();
   viewChangeCallback?.(viewIndex, history.length);
 }
 

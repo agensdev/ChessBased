@@ -30,6 +30,8 @@ import {
   toggleLockCurrentMove,
   isAnyModalOpen,
   openHelpModal,
+  getLoadedGame,
+  clearLoadedGame,
 } from './ui';
 import { renderHistoryTree, refreshHistoryTree, setSelectedFen, type LineEntry } from './history-tree';
 import { setTreeNavigateCallback } from './tree-ui';
@@ -165,6 +167,7 @@ function boot(): void {
       }
     },
     () => {
+      clearLoadedGame();
       currentOpeningName = undefined;
       newGame(config);
     },
@@ -179,6 +182,7 @@ function boot(): void {
       continueFromHere();
     },
     () => {
+      clearLoadedGame();
       currentOpeningName = undefined;
       newGame(config);
       updateExplorerPanel();
@@ -227,6 +231,7 @@ function boot(): void {
 
     switch (e.key) {
       case 'n':
+        clearLoadedGame();
         currentOpeningName = undefined;
         newGame(config);
         break;
@@ -242,7 +247,12 @@ function boot(): void {
         break;
       case ' ':
         e.preventDefault();
-        if (isViewingHistory()) {
+        if (getLoadedGame()) {
+          if (isViewingHistory()) {
+            navigateForward();
+          }
+          // At end of loaded game, space does nothing
+        } else if (isViewingHistory()) {
           continueFromHere();
         } else if (getPhase() === 'OUT_OF_BOOK' || getPhase() === 'GAME_OVER') {
           currentOpeningName = undefined;
