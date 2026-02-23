@@ -2292,6 +2292,20 @@ function pgnToLine(pgn: string): MoveHistoryEntry[] {
   return line;
 }
 
+function uciStringToLine(uciStr: string): MoveHistoryEntry[] {
+  const tokens = uciStr.trim().split(/\s+/).filter(Boolean);
+  const chess = Chess.default();
+  const line: MoveHistoryEntry[] = [];
+  for (const token of tokens) {
+    const move = parseUci(token);
+    if (!move) break;
+    const san = makeSan(chess, move);
+    chess.play(move);
+    line.push({ san, uci: token, fen: '' });
+  }
+  return line;
+}
+
 function gameTimestamp(game: GameMeta): string {
   const date = game.da ?? game.mo;
   const time = game.ti ?? '';
@@ -2380,6 +2394,12 @@ function renderRecentGames(container: HTMLElement): void {
   const list = document.createElement('div');
   list.className = 'recent-games-list';
   if (!recentGamesExpanded) list.style.display = 'none';
+  let recentScrollTimer = 0;
+  list.addEventListener('scroll', () => {
+    list.classList.add('scrolling');
+    clearTimeout(recentScrollTimer);
+    recentScrollTimer = window.setTimeout(() => list.classList.remove('scrolling'), 1000);
+  }, { passive: true });
 
   function renderBatch(): void {
     const end = Math.min(rendered + BATCH_SIZE, filtered.length);
@@ -2456,15 +2476,18 @@ function renderGameRow(game: GameMeta): HTMLDivElement {
   const row = document.createElement('div');
   row.className = 'recent-game-row';
 
-  if (game.ec) {
-    const eco = game.ec;
+  if (game.mv || game.ec) {
     const color = game.uw ? 'white' : 'black';
     row.classList.add('clickable');
     row.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('.recent-game-external')) return;
-      const entry = findPgnByEco(eco);
-      if (!entry) return;
-      const line = pgnToLine(entry.pgn);
+      let line: MoveHistoryEntry[] = [];
+      if (game.mv) {
+        line = uciStringToLine(game.mv);
+      } else if (game.ec) {
+        const entry = findPgnByEco(game.ec);
+        if (entry) line = pgnToLine(entry.pgn);
+      }
       if (line.length > 0) {
         setOrientation(color);
         replayLine(line);
@@ -2795,6 +2818,7 @@ async function doPersonalImport(): Promise<void> {
     resultEl.className = 'pgn-result success';
 
     switchSidebarTab('personal');
+    updateExplorerPanel();
     setTimeout(closePersonalImportModal, 1500);
   } catch (e: unknown) {
     progressFill.classList.remove('indeterminate');

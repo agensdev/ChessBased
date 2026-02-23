@@ -55,6 +55,7 @@ export interface GameMeta {
   ec?: string;  // ECO code (e.g. C33)
   gl?: string;  // game link (URL)
   op?: string;  // opponent name
+  mv?: string;  // all moves as space-separated UCI (e.g. "e2e4 e7e5 g1f3")
 }
 
 /** Full database stored in IndexedDB */
@@ -546,23 +547,29 @@ export function processGamesIntoDB(
     if (!posResult.isOk) continue;
 
     let ply = 0;
+    const ucis: string[] = [];
     walk(game.moves, new Box(posResult.value), (ctx, node: PgnNodeData) => {
-      if (ply >= MAX_PLY) return;
       const pos: Position = ctx.value;
       const move = parseSan(pos, node.san);
       if (!move) return;
 
-      const fen = makeFen(pos.toSetup());
       const uci = makeUci(move);
-      const key = positionKey(fen);
+      ucis.push(uci);
 
-      if (!db.positions[key]) db.positions[key] = {};
-      if (!db.positions[key][uci]) db.positions[key][uci] = [];
-      db.positions[key][uci].push(gameIdx);
+      if (ply < MAX_PLY) {
+        const fen = makeFen(pos.toSetup());
+        const key = positionKey(fen);
+
+        if (!db.positions[key]) db.positions[key] = {};
+        if (!db.positions[key][uci]) db.positions[key][uci] = [];
+        db.positions[key][uci].push(gameIdx);
+      }
 
       pos.play(move);
       ply++;
     });
+
+    if (ucis.length > 0) meta.mv = ucis.join(' ');
 
     processed++;
   }
