@@ -164,17 +164,14 @@
             <button class="chip" data-speed="classical">Classical</button>
           </div>
         </div>
-        <div id="personal-chesscom-filters" class="personal-filters hidden">
+        <div id="personal-range-filters" class="personal-filters">
           <div class="personal-filter-label">Import range</div>
-          <div class="personal-chesscom-range-row">
-            <div class="chip-grid personal-month-chips">
-              <button class="chip selected" data-months="0">All</button>
-              <button class="chip" data-months="12">1 yr</button>
-              <button class="chip" data-months="6">6 mo</button>
-            </div>
-            <span class="personal-range-text">or</span>
-            <input id="personal-months-input" type="number" min="1" max="999" placeholder="Custom" class="personal-months-input" />
-            <span class="personal-range-text">months</span>
+          <div class="segment-picker segment-sm import-range-picker">
+            <button class="segment-btn selected" data-months="0">All time</button>
+            <button class="segment-btn" data-months="60">5y</button>
+            <button class="segment-btn" data-months="36">3y</button>
+            <button class="segment-btn" data-months="12">1y</button>
+            <button class="segment-btn" data-months="6">6m</button>
           </div>
         </div>
         <div id="personal-import-progress" class="personal-import-progress hidden">

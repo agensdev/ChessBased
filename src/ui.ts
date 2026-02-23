@@ -2677,19 +2677,12 @@ function initPersonalImportModal(): void {
     chip.addEventListener('click', () => chip.classList.toggle('selected'));
   });
 
-  // Chess.com month range: chips + custom input
-  const monthsInput = document.getElementById('personal-months-input') as HTMLInputElement;
-  document.querySelectorAll('#personal-chesscom-filters .chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('#personal-chesscom-filters .chip').forEach(c => c.classList.remove('selected'));
-      chip.classList.add('selected');
-      monthsInput.value = '';
+  // Import range segment picker
+  document.querySelectorAll('.import-range-picker .segment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.import-range-picker .segment-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
     });
-  });
-  monthsInput.addEventListener('input', () => {
-    if (monthsInput.value.trim()) {
-      document.querySelectorAll('#personal-chesscom-filters .chip').forEach(c => c.classList.remove('selected'));
-    }
   });
 
   document.getElementById('personal-import-btn')!.addEventListener('click', doPersonalImport);
@@ -2703,14 +2696,9 @@ function initPersonalImportModal(): void {
 }
 
 function getSelectedMaxMonths(): number | undefined {
-  const customVal = (document.getElementById('personal-months-input') as HTMLInputElement).value.trim();
-  if (customVal) {
-    const parsed = parseInt(customVal, 10);
-    if (parsed > 0) return parsed;
-  }
-  const selectedChip = document.querySelector('#personal-chesscom-filters .chip.selected') as HTMLElement | null;
-  const chipVal = selectedChip ? parseInt(selectedChip.dataset.months ?? '0', 10) : 0;
-  return chipVal > 0 ? chipVal : undefined;
+  const selected = document.querySelector('.import-range-picker .segment-btn.selected') as HTMLElement | null;
+  const val = selected ? parseInt(selected.dataset.months ?? '0', 10) : 0;
+  return val > 0 ? val : undefined;
 }
 
 function getSelectedSpeeds(): string[] {
@@ -2720,10 +2708,8 @@ function getSelectedSpeeds(): string[] {
 
 function updateImportFiltersVisibility(): void {
   const filtersEl = document.getElementById('personal-filters')!;
-  const chesscomFilters = document.getElementById('personal-chesscom-filters')!;
-  // Speed filters only for Lichess; month range always visible
+  // Speed filters only for Lichess; range picker always visible
   filtersEl.classList.toggle('hidden', selectedPlatform !== 'lichess');
-  chesscomFilters.classList.remove('hidden');
 }
 
 function openPersonalImportModal(): void {

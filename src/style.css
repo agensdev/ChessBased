@@ -3262,36 +3262,14 @@ input[type='range']::-moz-range-track {
   font-size: 12px;
 }
 
-.personal-chesscom-range-row {
+.import-range-picker {
+  width: 100%;
   display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
-.personal-range-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.personal-months-input {
-  width: 52px;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 6px;
-  font-size: 12px;
-  font-family: var(--font-mono);
+.import-range-picker .segment-btn {
+  flex: 1;
   text-align: center;
-}
-
-.personal-months-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.personal-months-input::placeholder {
-  color: var(--text-dim);
 }
 
 /* Personal Explorer Filter Panel */
@@ -6154,6 +6132,33 @@ input[type='range']::-moz-range-track {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.recent-games-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.recent-games-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recent-games-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0);
+  border-radius: 4px;
+}
+
+.recent-games-list.scrolling::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .recent-games-list {
+    scrollbar-width: none;
+  }
+  .recent-games-list.scrolling {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  }
 }
 
 .recent-game-row {
