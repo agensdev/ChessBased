@@ -4,9 +4,12 @@ const BASE_URL = 'https://explorer.lichess.ovh/lichess';
 
 let pending: Promise<ExplorerResponse> | null = null;
 
+const MAX_RETRIES = 5;
+
 async function fetchExplorer(
   fen: string,
   config: AppConfig,
+  attempt = 0,
 ): Promise<ExplorerResponse> {
   const params = new URLSearchParams({
     fen,
@@ -19,8 +22,12 @@ async function fetchExplorer(
   const res = await fetch(`${BASE_URL}?${params}`);
 
   if (res.status === 429) {
-    await new Promise((r) => setTimeout(r, 2000));
-    return fetchExplorer(fen, config);
+    if (attempt >= MAX_RETRIES) {
+      throw new Error('Explorer API rate limited after max retries');
+    }
+    const delay = 2000 * Math.pow(2, attempt); // exponential backoff: 2s, 4s, 8s, 16s, 32s
+    await new Promise((r) => setTimeout(r, delay));
+    return fetchExplorer(fen, config, attempt + 1);
   }
 
   if (!res.ok) {

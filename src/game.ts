@@ -123,6 +123,14 @@ export async function fetchExplorerForFen(fen: string): Promise<ExplorerResponse
     return cached;
   }
 
+  // Skip Lichess API call when in personal mode — data isn't displayed
+  if (getExplorerMode() === 'personal') {
+    currentExplorerData = null;
+    currentExplorerFen = fen;
+    onExplorerUpdate?.();
+    return null;
+  }
+
   try {
     const data = await queryExplorer(fen, config);
     if (data) {
@@ -167,9 +175,6 @@ async function doBotTurn(): Promise<void> {
   }
   if (!data) {
     data = await fetchExplorerForFen(fen);
-  } else {
-    // Still fetch database in background for explorer UI cache
-    fetchExplorerForFen(fen);
   }
 
   if (!data || data.moves.length === 0) {
