@@ -3517,21 +3517,11 @@ input[type='range']::-moz-range-track {
   color: var(--accent);
 }
 
-.personal-color-note {
+.personal-color-picker {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  font-size: 11px;
-  color: var(--text-muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.personal-color-note input[type="checkbox"] {
-  accent-color: var(--accent);
-  margin: 0;
-  cursor: pointer;
+  margin: 6px 10px;
 }
 
 /* ── Responsive ── */
@@ -5918,7 +5908,6 @@ input[type='range']::-moz-range-track {
 .recent-games-filters {
   display: flex;
   gap: 4px;
-  padding: 4px 8px;
 }
 
 .recent-games-list {
@@ -6016,6 +6005,13 @@ input[type='range']::-moz-range-track {
   color: #efb6b6;
   border-color: rgba(215, 102, 102, 0.48);
   background: rgba(215, 102, 102, 0.12);
+}
+
+.recent-game-tc {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
 }
 
 .recent-game-opening {

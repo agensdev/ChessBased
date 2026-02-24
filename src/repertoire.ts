@@ -222,6 +222,38 @@ function generateMergeName(a: string, b: string): string {
   return `${base} (${i})`;
 }
 
+export function mergeMultiple(names: string[], keepName: string | null): string {
+  if (names.length < 2) return data.active;
+
+  const stores = names.map(n => data.systems[n]).filter(Boolean);
+  if (stores.length < 2) return data.active;
+
+  const merged = stores.reduce(mergeStores);
+
+  if (keepName && names.includes(keepName)) {
+    data.systems[keepName] = merged;
+    for (const n of names) {
+      if (n !== keepName) delete data.systems[n];
+    }
+    data.active = keepName;
+  } else {
+    const baseName = names.slice(0, 2).join(' + ');
+    const allNames = Object.keys(data.systems);
+    let finalName = baseName;
+    if (allNames.includes(finalName)) {
+      let i = 2;
+      while (allNames.includes(`${baseName} (${i})`)) i++;
+      finalName = `${baseName} (${i})`;
+    }
+    data.systems[finalName] = merged;
+    for (const n of names) delete data.systems[n];
+    data.active = finalName;
+  }
+
+  persist();
+  return data.active;
+}
+
 export function mergeOpenings(nameA: string, nameB: string, strategy: MergeStrategy): string {
   const storeA = data.systems[nameA];
   const storeB = data.systems[nameB];

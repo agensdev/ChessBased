@@ -273,7 +273,7 @@ function recomputeFilteredSet(): void {
   filteredGameSet = set;
 }
 
-export function gameMatchesFilters(g: GameMeta): boolean {
+export function gameMatchesFilters(g: GameMeta, options?: { ignoreColor?: boolean }): boolean {
   if (activeFilters.timeClasses && activeFilters.timeClasses.length > 0) {
     if (!activeFilters.timeClasses.includes(g.tc)) return false;
   }
@@ -284,8 +284,10 @@ export function gameMatchesFilters(g: GameMeta): boolean {
   if (activeFilters.untilDate && (!dateKey || dateKey > activeFilters.untilDate)) return false;
   if (activeFilters.sinceMonth && g.mo < activeFilters.sinceMonth) return false;
   if (activeFilters.untilMonth && g.mo > activeFilters.untilMonth) return false;
-  if (activeFilters.color === 'white' && !g.uw) return false;
-  if (activeFilters.color === 'black' && g.uw) return false;
+  if (!options?.ignoreColor) {
+    if (activeFilters.color === 'white' && !g.uw) return false;
+    if (activeFilters.color === 'black' && g.uw) return false;
+  }
   return true;
 }
 
