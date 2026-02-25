@@ -2,7 +2,7 @@ import type { ExplorerResponse, AppConfig } from './types';
 
 const BASE_URL = 'https://explorer.lichess.ovh/lichess';
 
-let pending: Promise<ExplorerResponse> | null = null;
+let pending: { promise: Promise<ExplorerResponse>; fen: string } | null = null;
 
 const MAX_RETRIES = 5;
 
@@ -41,19 +41,23 @@ export async function queryExplorer(
   fen: string,
   config: AppConfig,
 ): Promise<ExplorerResponse> {
-  // Sequential queue: wait for any in-flight request
+  // Deduplicate: if the same FEN is already in-flight, reuse it
   if (pending) {
-    await pending;
+    if (pending.fen === fen) {
+      return pending.promise;
+    }
+    // Wait for previous request to finish before starting a new one
+    await pending.promise.catch(() => {});
   }
 
-  const request = fetchExplorer(fen, config);
-  pending = request;
+  const promise = fetchExplorer(fen, config);
+  pending = { promise, fen };
 
   try {
-    const result = await request;
+    const result = await promise;
     return result;
   } finally {
-    if (pending === request) {
+    if (pending?.promise === promise) {
       pending = null;
     }
   }
