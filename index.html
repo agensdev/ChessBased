@@ -12,14 +12,19 @@
 <body>
   <div id="app">
     <div id="left-sidebar">
-      <div id="system-picker"></div>
-      <div id="repertoire-actions"></div>
-      <div id="config-inline"></div>
-      <button id="report-btn" class="btn hidden">
-        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-        Games report
-      </button>
-      <div id="recent-games-container"></div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">Openings</div>
+        <div id="system-picker"></div>
+        <div id="repertoire-actions"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">Settings</div>
+        <div id="config-inline"></div>
+      </div>
+      <div class="sidebar-section sidebar-section-games">
+        <div id="games-section-header" class="sidebar-section-header">Games</div>
+        <div id="recent-games-container"></div>
+      </div>
     </div>
     <div id="board-column">
       <div id="board-row">

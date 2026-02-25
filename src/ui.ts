@@ -1302,46 +1302,12 @@ function refreshEngineHighlights(): void {
 }
 
 
-let personalFiltersOpen = false;
+let explorerFiltersOpen = false;
+let recentGamesFiltersOpen = false;
 let personalColorFilter: 'both' | 'white' | 'black' = 'both';
 let filterClickOutsideHandler: ((e: MouseEvent) => void) | null = null;
 
-function renderPersonalInfoBar(el: HTMLElement): void {
-  const cfg = getPersonalConfig();
-  if (!cfg) return;
 
-  const bar = document.createElement('div');
-  bar.className = 'personal-info-bar';
-
-  const text = document.createElement('span');
-  text.className = 'personal-info-text';
-  const platform = cfg.platform === 'lichess' ? 'lichess' : 'chess.com';
-  const filtered = getFilteredGameCount();
-  const total = cfg.gameCount;
-  const countText = filtered < total
-    ? `${formatGames(filtered)}/${formatGames(total)} games`
-    : `${formatGames(total)} games`;
-  text.innerHTML = `<span class="personal-username">${platform}: ${cfg.username}</span> &middot; ${countText}`;
-  bar.append(text);
-
-  const filterBtn = document.createElement('button');
-  filterBtn.className = personalFiltersOpen ? 'active' : '';
-  filterBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>`;
-  filterBtn.setAttribute('data-tooltip', 'Filter games');
-  filterBtn.addEventListener('click', () => {
-    personalFiltersOpen = !personalFiltersOpen;
-    updateExplorerPanel();
-  });
-  bar.append(filterBtn);
-
-  const refreshBtn = document.createElement('button');
-  refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
-  refreshBtn.setAttribute('data-tooltip', 'Refresh games');
-  refreshBtn.addEventListener('click', () => refreshExplorerGames(refreshBtn));
-  bar.append(refreshBtn);
-
-  el.append(bar);
-}
 
 function renderPersonalColorPicker(el: HTMLElement): void {
   const wrap = document.createElement('div');
@@ -1365,20 +1331,28 @@ function renderPersonalColorPicker(el: HTMLElement): void {
     picker.append(btn);
   }
 
-  const info = document.createElement('div');
-  info.className = 'info-icon-wrap';
-  info.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
-  const tooltip = document.createElement('div');
-  tooltip.className = 'info-tooltip';
-  const orientation = getOrientation();
-  const opposite = orientation === 'white' ? 'black' : 'white';
-  tooltip.innerHTML =
-    '<b>Both</b> — all your games at this position.<br>' +
-    `<b>My Side</b> — games where you played ${orientation}.<br>` +
-    `<b>Their Side</b> — games where you played ${opposite}.`;
-  info.append(tooltip);
+  wrap.append(picker);
 
-  wrap.append(picker, info);
+  const cfg = getPersonalConfig();
+  if (cfg) {
+    const filterBtn = document.createElement('button');
+    filterBtn.className = 'personal-action-btn' + (explorerFiltersOpen ? ' active' : '');
+    filterBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>`;
+    filterBtn.setAttribute('data-tooltip', 'Filter games');
+    filterBtn.addEventListener('click', () => {
+      explorerFiltersOpen = !explorerFiltersOpen;
+      updateExplorerPanel();
+    });
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'personal-action-btn';
+    refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
+    refreshBtn.setAttribute('data-tooltip', 'Refresh games');
+    refreshBtn.addEventListener('click', () => refreshExplorerGames(refreshBtn));
+
+    wrap.append(filterBtn, refreshBtn);
+  }
+
   el.append(wrap);
 }
 
@@ -1389,13 +1363,36 @@ function renderPersonalFilterPanel(el: HTMLElement, context: 'explorer' | 'recen
     filterClickOutsideHandler = null;
   }
 
-  if (!personalFiltersOpen) return;
+  const isOpen = context === 'recent-games' ? recentGamesFiltersOpen : explorerFiltersOpen;
+  if (!isOpen) return;
   const stats = getPersonalStats();
   if (!stats) return;
   const filters = getPersonalFilters();
 
   const panel = document.createElement('div');
   panel.className = 'personal-filter-panel';
+
+  // Color filter (recent-games only)
+  if (context === 'recent-games') {
+    const section = document.createElement('div');
+    section.className = 'personal-filter-section';
+    section.innerHTML = `<div class="personal-filter-label">Color</div>`;
+    const picker = document.createElement('div');
+    picker.className = 'segment-picker segment-sm';
+    for (const value of ['all', 'white', 'black'] as const) {
+      const btn = document.createElement('button');
+      btn.className = 'segment-btn' + (recentGamesColorFilter === value ? ' selected' : '');
+      btn.textContent = value === 'all' ? 'All' : value === 'white' ? 'White' : 'Black';
+      btn.addEventListener('click', () => {
+        recentGamesColorFilter = value;
+        picker.querySelectorAll('.segment-btn').forEach(b => b.classList.toggle('selected', b === btn));
+        updateRecentGamesList();
+      });
+      picker.append(btn);
+    }
+    section.append(picker);
+    panel.append(section);
+  }
 
   // Time class chips
   if (stats.timeClasses.length > 1) {
@@ -1583,8 +1580,9 @@ function renderPersonalFilterPanel(el: HTMLElement, context: 'explorer' | 'recen
   requestAnimationFrame(() => {
     filterClickOutsideHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest?.('.personal-filter-panel, .personal-info-bar, .recent-games-header')) return;
-      personalFiltersOpen = false;
+      if (target.closest?.('.personal-filter-panel, .personal-color-picker, .recent-games-header, .recent-games-filters')) return;
+      if (context === 'recent-games') recentGamesFiltersOpen = false;
+      else explorerFiltersOpen = false;
       document.removeEventListener('mousedown', filterClickOutsideHandler!);
       filterClickOutsideHandler = null;
       if (context === 'recent-games') updateRecentGamesPanel();
@@ -1607,7 +1605,7 @@ function applyFiltersFromPanel(panel: HTMLElement, context: 'explorer' | 'recent
     // Only update time classes, preserve existing rating/date/color filters
     const current = getPersonalFilters();
     setPersonalFilters({ ...current, timeClasses });
-    refreshPersonalMoves();
+    updateRecentGamesList();
     return;
   }
 
@@ -1649,23 +1647,8 @@ function refreshPersonalMoves(): void {
   const el = document.getElementById('explorer-moves')!;
   const { fen } = getExplorerData();
 
-  // Update info bar text
-  const infoText = el.querySelector('.personal-info-text');
-  if (infoText) {
-    const cfg = getPersonalConfig();
-    if (cfg) {
-      const platform = cfg.platform === 'lichess' ? 'lichess' : 'chess.com';
-      const filtered = getFilteredGameCount();
-      const total = cfg.gameCount;
-      const countText = filtered < total
-        ? `${formatGames(filtered)}/${formatGames(total)} games`
-        : `${formatGames(total)} games`;
-      infoText.innerHTML = `<span class="personal-username">${platform}: ${cfg.username}</span> &middot; ${countText}`;
-    }
-  }
-
-  // Remove old move rows, empty state, and color note
-  el.querySelectorAll('.explorer-header, .explorer-list, .personal-empty-state, .personal-color-picker').forEach(e => e.remove());
+  // Remove old move rows and empty state
+  el.querySelectorAll('.explorer-header, .explorer-list, .personal-empty-state').forEach(e => e.remove());
 
   const personalData = queryPersonalExplorer(fen);
   const moves = personalData?.moves ?? [];
@@ -1675,13 +1658,11 @@ function refreshPersonalMoves(): void {
     noData.style.padding = '16px';
     noData.textContent = 'No games in this position.';
     el.append(noData);
-    renderPersonalColorPicker(el);
     return;
   }
 
   renderMoveRows(moves, fen, null, el);
-  renderPersonalColorPicker(el);
-  if (!personalFiltersOpen) updateRecentGamesPanel();
+  if (!explorerFiltersOpen) updateRecentGamesPanel();
 }
 
 function renderPersonalEmptyState(el: HTMLElement): void {
@@ -1992,11 +1973,14 @@ export function updateExplorerPanel(): void {
       setPersonalFilters({ ...current, color: targetColor });
     }
 
-    const infoWrap = document.createElement('div');
-    infoWrap.className = 'personal-info-wrap';
-    renderPersonalInfoBar(infoWrap);
-    renderPersonalFilterPanel(infoWrap);
-    el.append(infoWrap);
+    renderPersonalColorPicker(el);
+
+    if (explorerFiltersOpen) {
+      const infoWrap = document.createElement('div');
+      infoWrap.className = 'personal-info-wrap';
+      renderPersonalFilterPanel(infoWrap);
+      el.append(infoWrap);
+    }
 
     const personalData = queryPersonalExplorer(fen);
     const moves = personalData?.moves ?? [];
@@ -2006,14 +1990,12 @@ export function updateExplorerPanel(): void {
       noData.style.padding = '16px';
       noData.textContent = 'No games in this position.';
       el.append(noData);
-      renderPersonalColorPicker(el);
       updateRecentGamesPanel();
       return;
     }
 
     // No analysis badges in personal mode
     renderMoveRows(moves, fen, null, el);
-    renderPersonalColorPicker(el);
     updateRecentGamesPanel();
     return;
   }
@@ -2147,7 +2129,7 @@ function updateRecentGamesPanel(): void {
   if (prevList) savedRecentGamesScroll = prevList.scrollTop;
   container.innerHTML = '';
   const hasData = hasPersonalData();
-  document.getElementById('report-btn')?.classList.toggle('hidden', !hasData);
+  const sectionHeader = document.getElementById('games-section-header');
 
   // Show/hide sidebar tabs based on whether personal data exists
   const sidebarTabs = document.getElementById('sidebar-tabs');
@@ -2158,7 +2140,15 @@ function updateRecentGamesPanel(): void {
     }
   }
 
+  const gamesSection = sectionHeader?.closest('.sidebar-section-games') as HTMLElement | null;
+
   if (!hasData) {
+    // Reset header to static "Games"
+    if (sectionHeader) {
+      sectionHeader.className = 'sidebar-section-header';
+      sectionHeader.innerHTML = 'Games';
+    }
+    gamesSection?.classList.remove('games-card');
     const empty = document.createElement('div');
     empty.className = 'recent-games-empty';
     empty.innerHTML =
@@ -2177,12 +2167,59 @@ function updateRecentGamesPanel(): void {
     container.append(empty);
     return;
   }
+
+  // Row 1: Identity header — username + game count + refresh/clear actions
+  const cfg = getPersonalConfig()!;
+  const total = cfg.gameCount;
+
+  gamesSection?.classList.add('games-card');
+
+  if (sectionHeader) {
+    sectionHeader.className = 'games-identity-row';
+    const nameSpan = `<span class="games-identity-name">${cfg.username}</span>`;
+    const countSpan = `<span class="games-identity-count">&middot; ${formatGames(total)} games</span>`;
+    const refreshSvg = `<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
+    const clearSvg = `<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
+    sectionHeader.innerHTML =
+      `<span class="games-identity-text">${nameSpan} ${countSpan}</span>` +
+      `<span class="games-identity-actions">` +
+      `<button class="games-identity-action" data-action="refresh" title="Refresh games">${refreshSvg}</button>` +
+      `<button class="games-identity-action" data-action="clear" title="Clear imported games">${clearSvg}</button>` +
+      `</span>`;
+
+    const refreshBtn = sectionHeader.querySelector<HTMLButtonElement>('[data-action="refresh"]')!;
+    refreshBtn.addEventListener('click', () => refreshRecentGames(refreshBtn));
+
+    const clearBtn = sectionHeader.querySelector<HTMLButtonElement>('[data-action="clear"]')!;
+    clearBtn.addEventListener('click', async () => {
+      const result = await confirmModal({
+        title: 'Clear imported games?',
+        message: 'This will remove all imported game data. You can re-import at any time.',
+        buttons: [{ label: 'Clear', value: 'clear', style: 'danger' }],
+        danger: true,
+        anchor: clearBtn,
+      });
+      if (result !== 'clear') return;
+      await clearPersonalData();
+      explorerFiltersOpen = false;
+      recentGamesFiltersOpen = false;
+      updateExplorerPanel();
+      updateRecentGamesPanel();
+    });
+  }
+
+  // Row 2: Report button
+  const reportBtn = document.createElement('button');
+  reportBtn.className = 'btn outline games-report-btn';
+  reportBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg> Games report`;
+  reportBtn.addEventListener('click', () => openReportPage());
+  container.append(reportBtn);
+
   renderRecentGames(container);
 }
 
 // ── Recent Games ──
 
-let recentGamesExpanded = true;
 let recentGamesRefreshing = false;
 let recentGamesColorFilter: 'all' | 'white' | 'black' = 'all';
 
@@ -2317,78 +2354,28 @@ function renderRecentGames(container: HTMLElement): void {
   const section = document.createElement('div');
   section.className = 'recent-games';
 
-  const header = document.createElement('div');
-  header.className = 'recent-games-header';
-
-  const headerToggle = document.createElement('button');
-  headerToggle.className = 'recent-games-toggle';
-  headerToggle.innerHTML = `<span>Recent Games (${filtered.length})</span><svg class="recent-games-chevron${recentGamesExpanded ? ' expanded' : ''}" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
-
-  const filterBtn = document.createElement('button');
-  filterBtn.className = 'recent-games-refresh' + (personalFiltersOpen ? ' active' : '');
-  filterBtn.title = 'Filter games';
-  filterBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>`;
-  filterBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    personalFiltersOpen = !personalFiltersOpen;
-    updateExplorerPanel();
-  });
-
-  const refreshBtn = document.createElement('button');
-  refreshBtn.className = 'recent-games-refresh';
-  refreshBtn.title = 'Refresh games';
-  refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>`;
-  refreshBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    refreshRecentGames(refreshBtn);
-  });
-
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'recent-games-refresh';
-  clearBtn.title = 'Clear imported games';
-  clearBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
-  clearBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const result = await confirmModal({
-      title: 'Clear imported games?',
-      message: 'This will remove all imported game data. You can re-import at any time.',
-      buttons: [{ label: 'Clear', value: 'clear', style: 'danger' }],
-      danger: true,
-      anchor: clearBtn,
-    });
-    if (result !== 'clear') return;
-    await clearPersonalData();
-    personalFiltersOpen = false;
-    updateExplorerPanel();
-    updateRecentGamesPanel();
-  });
-
-  header.append(headerToggle, filterBtn, refreshBtn, clearBtn);
-  section.append(header);
-
-  // Color filter + filter panel
+  // Row 3: Label + filter icon
   const filterRow = document.createElement('div');
   filterRow.className = 'recent-games-filters';
-  if (!recentGamesExpanded) filterRow.style.display = 'none';
-  const segmentPicker = document.createElement('div');
-  segmentPicker.className = 'segment-picker segment-sm';
-  for (const value of ['all', 'white', 'black'] as const) {
-    const btn = document.createElement('button');
-    btn.className = 'segment-btn' + (recentGamesColorFilter === value ? ' selected' : '');
-    btn.textContent = value === 'all' ? 'All' : value === 'white' ? 'White' : 'Black';
-    btn.addEventListener('click', () => {
-      recentGamesColorFilter = value;
-      updateRecentGamesPanel();
-    });
-    segmentPicker.append(btn);
-  }
-  filterRow.append(segmentPicker);
+  const filterLabel = document.createElement('span');
+  filterLabel.className = 'recent-games-filters-label';
+  filterLabel.textContent = 'Recent Games';
+  filterRow.append(filterLabel);
+
+  const filterBtn = document.createElement('button');
+  filterBtn.className = 'games-identity-action' + (recentGamesFiltersOpen ? ' active' : '');
+  filterBtn.title = 'Filter games';
+  filterBtn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>`;
+  filterBtn.addEventListener('click', () => {
+    recentGamesFiltersOpen = !recentGamesFiltersOpen;
+    updateRecentGamesPanel();
+  });
+  filterRow.append(filterBtn);
   section.append(filterRow);
 
   // Shared personal filter panel (time control, rating, date)
   const filterWrap = document.createElement('div');
   filterWrap.className = 'personal-info-wrap';
-  if (!recentGamesExpanded) filterWrap.style.display = 'none';
   renderPersonalFilterPanel(filterWrap, 'recent-games');
   section.append(filterWrap);
 
@@ -2397,7 +2384,6 @@ function renderRecentGames(container: HTMLElement): void {
 
   const list = document.createElement('div');
   list.className = 'recent-games-list';
-  if (!recentGamesExpanded) list.style.display = 'none';
   let recentScrollTimer = 0;
   list.addEventListener('scroll', () => {
     list.classList.add('scrolling');
@@ -2430,22 +2416,53 @@ function renderRecentGames(container: HTMLElement): void {
   });
 
   section.append(list);
-
-  headerToggle.addEventListener('click', () => {
-    recentGamesExpanded = !recentGamesExpanded;
-    const show = recentGamesExpanded ? '' : 'none';
-    list.style.display = show;
-    filterRow.style.display = show;
-    filterWrap.style.display = show;
-    const chevron = headerToggle.querySelector('.recent-games-chevron');
-    chevron?.classList.toggle('expanded', recentGamesExpanded);
-  });
-
   container.append(section);
 
   if (savedRecentGamesScroll > 0) {
     list.scrollTop = savedRecentGamesScroll;
   }
+}
+
+function updateRecentGamesList(): void {
+  const el = document.querySelector<HTMLElement>('.recent-games-list');
+  if (!el) return;
+  const list = el;
+  list.innerHTML = '';
+
+  const games = getPersonalGames();
+  if (!games || games.length === 0) return;
+
+  const indexed = games.map((g, i) => ({ game: g, idx: i }));
+  indexed.sort((a, b) => {
+    const cmp = gameTimestamp(b.game).localeCompare(gameTimestamp(a.game));
+    return cmp !== 0 ? cmp : b.idx - a.idx;
+  });
+
+  const filtered = indexed.filter(({ game }) => {
+    if (recentGamesColorFilter === 'white' && !game.uw) return false;
+    if (recentGamesColorFilter === 'black' && game.uw) return false;
+    return gameMatchesFilters(game, { ignoreColor: true });
+  });
+
+  const BATCH_SIZE = 40;
+  let rendered = 0;
+
+  function renderBatch(): void {
+    const end = Math.min(rendered + BATCH_SIZE, filtered.length);
+    for (let i = rendered; i < end; i++) {
+      list.append(renderGameRow(filtered[i].game));
+    }
+    rendered = end;
+  }
+
+  renderBatch();
+
+  list.addEventListener('scroll', () => {
+    if (rendered >= filtered.length) return;
+    if (list.scrollTop + list.clientHeight >= list.scrollHeight - 100) {
+      renderBatch();
+    }
+  });
 }
 
 function badgeSymbol(badge: MoveBadge): string {
@@ -2975,7 +2992,6 @@ export function initSidebarTabs(): void {
     });
   });
 
-  document.getElementById('report-btn')?.addEventListener('click', () => openReportPage());
 }
 
 function applySidebarTab(id: SidebarTab): void {
