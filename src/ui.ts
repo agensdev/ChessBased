@@ -71,6 +71,9 @@ let currentEvalWinPct: number | null = null;
 
 // Currently loaded game for replay mode
 let loadedGame: GameMeta | null = null;
+
+// Remember last engine line count so toggling on restores previous setting
+let lastEngineLineCount = 3;
 type HistoryLinesView = 'history' | 'lines';
 let historyLinesView: HistoryLinesView = 'history';
 
@@ -86,6 +89,7 @@ export function initUI(
   onModeChange?: ModeChangeCallback,
 ): void {
   currentConfig = { ...config };
+  if (config.engineLineCount > 0) lastEngineLineCount = config.engineLineCount;
   configChangeCb = onConfigChange;
   newGameCb = onNewGame;
   flipCb = onFlip;
@@ -104,6 +108,7 @@ export function initUI(
   renderControls();
   renderConfigPanel();
   initHelpModal();
+  document.getElementById('sidebar-help-btn')?.addEventListener('click', openHelpModal);
   initTooltips();
   document.addEventListener('click', () => closeAllDropdowns());
 }
@@ -708,7 +713,7 @@ function renderConfigPanel(): void {
 
   const evalChip = document.createElement('button');
   evalChip.className = `chip${currentConfig.showEval ? ' selected' : ''}`;
-  evalChip.textContent = 'Eval bar';
+  evalChip.textContent = 'Eval';
   evalChip.setAttribute('data-tooltip', 'Stockfish evaluation bar next to the board');
   evalChip.addEventListener('click', () => {
     const isOn = evalChip.classList.toggle('selected');
@@ -718,7 +723,7 @@ function renderConfigPanel(): void {
 
   const badgesChip = document.createElement('button');
   badgesChip.className = `chip${currentConfig.showMoveBadges ? ' selected' : ''}`;
-  badgesChip.textContent = 'Move badges';
+  badgesChip.textContent = 'Badges';
   badgesChip.setAttribute('data-tooltip', 'Mark best moves (!), mistakes (?), and traps (?!)');
   badgesChip.addEventListener('click', () => {
     const isOn = badgesChip.classList.toggle('selected');
@@ -728,7 +733,7 @@ function renderConfigPanel(): void {
 
   const explorerChip = document.createElement('button');
   explorerChip.className = `chip${currentConfig.showExplorer ? ' selected' : ''}`;
-  explorerChip.textContent = 'Always show explorer';
+  explorerChip.textContent = 'Explorer';
   explorerChip.setAttribute('data-tooltip', 'Show explorer during bot play');
   explorerChip.addEventListener('click', () => {
     const isOn = explorerChip.classList.toggle('selected');
@@ -739,13 +744,12 @@ function renderConfigPanel(): void {
   const engineLinesChip = document.createElement('button');
   const elCount = currentConfig.engineLineCount;
   engineLinesChip.className = `chip${elCount > 0 ? ' selected' : ''}`;
-  engineLinesChip.textContent = elCount > 0 ? `${elCount} engine line${elCount > 1 ? 's' : ''}` : 'Engine lines';
-  engineLinesChip.setAttribute('data-tooltip', 'Cycle: off → 1 → 2 → 3 lines');
+  engineLinesChip.textContent = 'Engine';
+  engineLinesChip.setAttribute('data-tooltip', 'Show engine analysis lines');
   engineLinesChip.addEventListener('click', () => {
-    currentConfig.engineLineCount = currentConfig.engineLineCount >= 3 ? 0 : currentConfig.engineLineCount + 1;
-    const n = currentConfig.engineLineCount;
-    engineLinesChip.classList.toggle('selected', n > 0);
-    engineLinesChip.textContent = n > 0 ? `${n} engine line${n > 1 ? 's' : ''}` : 'Engine lines';
+    const wasOn = currentConfig.engineLineCount > 0;
+    currentConfig.engineLineCount = wasOn ? 0 : (lastEngineLineCount || 1);
+    engineLinesChip.classList.toggle('selected', !wasOn);
     configChangeCb(currentConfig);
   });
 
@@ -778,13 +782,7 @@ function renderConfigPanel(): void {
     summarizeSpeeds,
   );
 
-  const helpIconBtn = document.createElement('button');
-  helpIconBtn.className = 'btn icon';
-  helpIconBtn.textContent = '?';
-  helpIconBtn.setAttribute('data-tooltip', 'Help & guide');
-  helpIconBtn.addEventListener('click', openHelpModal);
-
-  dropdownRow.append(ratingsDropdown, speedsDropdown, helpIconBtn);
+  dropdownRow.append(ratingsDropdown, speedsDropdown);
 
   inlineEl.append(displaySection, dropdownRow);
 }
@@ -858,6 +856,7 @@ function closeAllDropdowns(): void {
   document.querySelectorAll('.multi-dropdown-panel').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.multi-dropdown').forEach(d => d.classList.remove('open'));
   document.querySelectorAll('.explorer-cog-popover').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('.engine-lines-config').forEach(p => p.classList.add('hidden'));
 }
 
 
@@ -1248,7 +1247,44 @@ export function renderEngineLines(lines: EngineLine[], fen: string): void {
     </div>`;
   }
 
-  el.innerHTML = html;
+  // Build header row with gear config
+  const headerHtml = `<div class="engine-lines-header">
+    <span class="engine-lines-title">Engine</span>
+    <div class="engine-lines-cog-wrap">
+      <button class="engine-lines-cog" data-tooltip="Configure engine lines">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+          <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.48.48 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.61 3.61 0 0112 15.6z"/>
+        </svg>
+      </button>
+      <div class="engine-lines-config hidden">
+        ${[1, 2, 3].map(n => `<button class="engine-lines-config-opt${currentConfig.engineLineCount === n ? ' selected' : ''}" data-lines="${n}">${n} line${n > 1 ? 's' : ''}</button>`).join('')}
+      </div>
+    </div>
+  </div>`;
+
+  el.innerHTML = headerHtml + html;
+
+  // Gear icon toggles config popover
+  const cogBtn = el.querySelector('.engine-lines-cog')!;
+  const configPanel = el.querySelector('.engine-lines-config')!;
+  cogBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    configPanel.classList.toggle('hidden');
+  });
+
+  // Line count options
+  configPanel.querySelectorAll('.engine-lines-config-opt').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const n = parseInt((btn as HTMLElement).dataset.lines!);
+      currentConfig.engineLineCount = n;
+      lastEngineLineCount = n;
+      configPanel.classList.add('hidden');
+      configPanel.querySelectorAll('.engine-lines-config-opt').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      configChangeCb(currentConfig);
+    });
+  });
 
   // Hover arrows + click to play (same pattern as explorer)
   el.querySelectorAll('.engine-line').forEach((row) => {

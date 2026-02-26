@@ -13,7 +13,7 @@ const TAB_CONFIG: { id: TabId; label: string }[] = [
 
 const MOVES_ELEMENTS = ['controls', 'alert-banner', 'history-toolbar', 'moves', 'opening-lines'];
 const EXPLORER_ELEMENTS = ['system-picker', 'repertoire-actions', 'engine-lines', 'sidebar-tabs', 'tab-explorer'];
-const REPERTOIRE_ELEMENTS = ['status', 'config-inline', 'report-btn', 'recent-games-container'];
+const REPERTOIRE_ELEMENTS = ['status', 'config-inline', 'recent-games-container'];
 
 let activeTab: TabId = 'explorer';
 let isMobile = false;
