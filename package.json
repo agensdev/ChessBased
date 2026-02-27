@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "build:openings": "npx tsx scripts/build-openings.ts"
+    "build:openings": "npx tsx scripts/build-openings.ts",
+    "test:report-transpositions": "mkdir -p .tmp && ./node_modules/.bin/esbuild scripts/test-report-transpositions.ts --bundle --platform=node --format=esm --outfile=.tmp/test-report-transpositions.mjs && node .tmp/test-report-transpositions.mjs"
   },
   "devDependencies": {
     "@types/d3-hierarchy": "^3.1.7",

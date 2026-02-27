@@ -18,6 +18,7 @@ import {
   type SideFamilyReport,
   type WDL,
 } from './report';
+import { findOpeningByFen } from './opening-index';
 import { loadConfig } from './config';
 import { isMoveLocked } from './repertoire';
 import type { MoveHistoryEntry } from './types';
@@ -46,6 +47,11 @@ const REPORT_OPEN_SESSION_KEY = 'chessbased-report-open';
 const REPORT_GUIDE_OPEN_KEY = 'chessbased-report-guide-open';
 const CURRENT_RATING_WINDOW = 100;
 const CURRENT_RATING_RANGE = CURRENT_RATING_WINDOW * 2;
+const BAR_PCT_LABEL_ATTR = 'data-pct-label';
+const MIDDLE_TRUNCATE_ATTR = 'data-middle-truncate';
+
+let reportPctLabelFitRaf: number | null = null;
+let reportPctLabelResizeBound = false;
 
 function currentRatingBounds(rating: number): { min: number; max: number } {
   const stats = getPersonalStats();
@@ -56,6 +62,98 @@ function currentRatingBounds(rating: number): { min: number; max: number } {
   if (max > ceil) { max = ceil; min = ceil - CURRENT_RATING_RANGE; }
   if (min < floor) { min = floor; max = floor + CURRENT_RATING_RANGE; }
   return { min, max };
+}
+
+function setBarPctLabel(segment: HTMLElement, pct: number): void {
+  const label = `${Math.round(pct)}%`;
+  segment.setAttribute(BAR_PCT_LABEL_ATTR, label);
+  segment.textContent = label;
+}
+
+function fitBarPctLabels(root: ParentNode): void {
+  const segments = root.querySelectorAll<HTMLElement>(`[${BAR_PCT_LABEL_ATTR}]`);
+  for (const segment of segments) {
+    const label = segment.getAttribute(BAR_PCT_LABEL_ATTR) ?? '';
+    if (!label) {
+      segment.textContent = '';
+      continue;
+    }
+    segment.textContent = label;
+    if (segment.scrollWidth > segment.clientWidth) {
+      segment.textContent = '';
+    }
+  }
+}
+
+function setMiddleTruncateText(el: HTMLElement, text: string): void {
+  el.setAttribute(MIDDLE_TRUNCATE_ATTR, text);
+  el.textContent = text;
+}
+
+function clearMiddleTruncateText(el: HTMLElement, text: string): void {
+  el.removeAttribute(MIDDLE_TRUNCATE_ATTR);
+  el.textContent = text;
+}
+
+function fitMiddleTruncateLabels(root: ParentNode): void {
+  const labels = root.querySelectorAll<HTMLElement>(`[${MIDDLE_TRUNCATE_ATTR}]`);
+  for (const label of labels) {
+    const full = label.getAttribute(MIDDLE_TRUNCATE_ATTR) ?? '';
+    if (!full) {
+      label.textContent = '';
+      continue;
+    }
+    label.textContent = full;
+    const available = label.clientWidth;
+    if (available <= 0 || label.scrollWidth <= available) continue;
+    if (full.length <= 1) {
+      label.textContent = '…';
+      continue;
+    }
+
+    const ellipsis = '…';
+    let low = 1;
+    let high = full.length - 1;
+    let best = ellipsis;
+
+    while (low <= high) {
+      const keep = Math.floor((low + high) / 2);
+      const leftCount = Math.ceil(keep / 2);
+      const rightCount = Math.floor(keep / 2);
+      const left = full.slice(0, leftCount);
+      const right = rightCount > 0 ? full.slice(full.length - rightCount) : '';
+      const candidate = `${left}${ellipsis}${right}`;
+      label.textContent = candidate;
+      if (label.scrollWidth <= available) {
+        best = candidate;
+        low = keep + 1;
+      } else {
+        high = keep - 1;
+      }
+    }
+
+    label.textContent = best;
+  }
+}
+
+function scheduleReportPctLabelFit(): void {
+  if (reportPctLabelFitRaf != null) cancelAnimationFrame(reportPctLabelFitRaf);
+  reportPctLabelFitRaf = requestAnimationFrame(() => {
+    reportPctLabelFitRaf = null;
+    const page = document.getElementById('report-page');
+    if (!page || page.classList.contains('hidden')) return;
+    fitBarPctLabels(page);
+    fitMiddleTruncateLabels(page);
+  });
+}
+
+function ensureReportPctLabelResizeBinding(): void {
+  if (reportPctLabelResizeBound) return;
+  reportPctLabelResizeBound = true;
+  window.addEventListener('resize', () => {
+    if (!reportOpen) return;
+    scheduleReportPctLabelFit();
+  });
 }
 
 // Line navigation state
@@ -169,6 +267,7 @@ export async function openReportPage(): Promise<void> {
   const page = document.getElementById('report-page')!;
   page.classList.remove('hidden');
   page.innerHTML = '';
+  ensureReportPctLabelResizeBinding();
 
   const config = explorerConfig;
   const games = getPersonalGames();
@@ -510,7 +609,7 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
       untilDate: reportFilters.untilDate,
       color: color ?? undefined,
     });
-  }, queryPersonalMoveGameIndices, (idx) => allGames[idx], reportFilters.color);
+  }, queryPersonalMoveGameIndices, (idx) => allGames[idx], reportFilters.color, 'position');
   // Restore filters without color constraint after report generation
   syncExplorerFilters(reportFilters);
   renderReportContent(content, report);
@@ -542,6 +641,7 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
     }
   };
   document.addEventListener('keydown', keyHandler);
+  scheduleReportPctLabelFit();
 }
 
 function rerender(): void {
@@ -889,6 +989,11 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   const boardCol = el('div', 'report-board-col');
   body.append(boardCol);
 
+  const boardEco = el('div', 'report-board-eco placeholder');
+  boardEco.textContent = 'Opening: —';
+  boardEco.setAttribute('title', 'No opening match for this position');
+  boardCol.append(boardEco);
+
   const boardWrap = el('div', 'report-board-wrap');
   boardCol.append(boardWrap);
 
@@ -974,6 +1079,7 @@ function renderReportContent(content: HTMLElement, report: ReportData): void {
   lineFens = [];
   lineLastMoves = [];
   lineGameResultFilter = 'all';
+  updateReportBoardEcoLabel(null);
 
   renderSelectedLineGames();
 }
@@ -1021,19 +1127,27 @@ function renderCompactOverview(parent: HTMLElement, report: ReportData): void {
     const dPct = (wdl.draws / wdl.total) * 100;
     const bPct = (wdl.losses / wdl.total) * 100;
 
-    const wEl = el('div', 'bar-white');
-    wEl.style.width = `${wPct}%`;
-    if (wPct >= 12) wEl.textContent = `${Math.round(wPct)}%`;
-    wEl.setAttribute('data-tooltip', `Win: ${wdl.wins} games (${Math.round(wPct)}%)`);
-    const dEl = el('div', 'bar-draw');
-    dEl.style.width = `${dPct}%`;
-    if (dPct >= 12) dEl.textContent = `${Math.round(dPct)}%`;
-    dEl.setAttribute('data-tooltip', `Draw: ${wdl.draws} games (${Math.round(dPct)}%)`);
-    const bEl = el('div', 'bar-black');
-    bEl.style.width = `${bPct}%`;
-    if (bPct >= 12) bEl.textContent = `${Math.round(bPct)}%`;
-    bEl.setAttribute('data-tooltip', `Loss: ${wdl.losses} games (${Math.round(bPct)}%)`);
-    bar.append(wEl, dEl, bEl);
+    if (wPct > 0) {
+      const wEl = el('div', 'bar-piece-white');
+      wEl.style.width = `${wPct}%`;
+      setBarPctLabel(wEl, wPct);
+      wEl.setAttribute('data-tooltip', `Win: ${wdl.wins} games (${Math.round(wPct)}%)`);
+      bar.append(wEl);
+    }
+    if (dPct > 0) {
+      const dEl = el('div', 'bar-draw-neutral');
+      dEl.style.width = `${dPct}%`;
+      setBarPctLabel(dEl, dPct);
+      dEl.setAttribute('data-tooltip', `Draw: ${wdl.draws} games (${Math.round(dPct)}%)`);
+      bar.append(dEl);
+    }
+    if (bPct > 0) {
+      const bEl = el('div', 'bar-piece-black');
+      bEl.style.width = `${bPct}%`;
+      setBarPctLabel(bEl, bPct);
+      bEl.setAttribute('data-tooltip', `Loss: ${wdl.losses} games (${Math.round(bPct)}%)`);
+      bar.append(bEl);
+    }
     wrap.append(bar);
   }
 
@@ -1292,19 +1406,24 @@ function renderWDLBar(parent: HTMLElement, wdl: WDL): void {
   const dPct = (wdl.draws / wdl.total) * 100;
   const bPct = (wdl.losses / wdl.total) * 100;
 
-  const wEl = el('div', 'bar-white');
-  wEl.style.width = `${wPct}%`;
-  if (wPct >= 10) wEl.textContent = `${Math.round(wPct)}%`;
-
-  const dEl = el('div', 'bar-draw');
-  dEl.style.width = `${dPct}%`;
-  if (dPct >= 8) dEl.textContent = `${Math.round(dPct)}%`;
-
-  const bEl = el('div', 'bar-black');
-  bEl.style.width = `${bPct}%`;
-  if (bPct >= 10) bEl.textContent = `${Math.round(bPct)}%`;
-
-  bar.append(wEl, dEl, bEl);
+  if (wPct > 0) {
+    const wEl = el('div', 'bar-piece-white');
+    wEl.style.width = `${wPct}%`;
+    setBarPctLabel(wEl, wPct);
+    bar.append(wEl);
+  }
+  if (dPct > 0) {
+    const dEl = el('div', 'bar-draw-neutral');
+    dEl.style.width = `${dPct}%`;
+    setBarPctLabel(dEl, dPct);
+    bar.append(dEl);
+  }
+  if (bPct > 0) {
+    const bEl = el('div', 'bar-piece-black');
+    bEl.style.width = `${bPct}%`;
+    setBarPctLabel(bEl, bPct);
+    bar.append(bEl);
+  }
 
   const legend = el('div', 'report-wdl-legend');
   legend.innerHTML = `<span>${wdl.wins}W</span> <span>${wdl.draws}D</span> <span>${wdl.losses}L</span>`;
@@ -1423,13 +1542,9 @@ function renderTimeControlTable(parent: HTMLElement, stats: { timeClass: string;
     const dPct = tc.wdl.total > 0 ? (tc.wdl.draws / tc.wdl.total) * 100 : 0;
     const bPct = tc.wdl.total > 0 ? (tc.wdl.losses / tc.wdl.total) * 100 : 0;
 
-    const wEl = el('div', 'bar-white');
-    wEl.style.width = `${wPct}%`;
-    const dEl = el('div', 'bar-draw');
-    dEl.style.width = `${dPct}%`;
-    const bEl = el('div', 'bar-black');
-    bEl.style.width = `${bPct}%`;
-    bar.append(wEl, dEl, bEl);
+    if (wPct > 0) { const wEl = el('div', 'bar-win'); wEl.style.width = `${wPct}%`; bar.append(wEl); }
+    if (dPct > 0) { const dEl = el('div', 'bar-draw'); dEl.style.width = `${dPct}%`; bar.append(dEl); }
+    if (bPct > 0) { const bEl = el('div', 'bar-loss'); bEl.style.width = `${bPct}%`; bar.append(bEl); }
 
     row.append(name, games, rate, bar);
     table.append(row);
@@ -1516,139 +1631,120 @@ function buildFamilyCard(family: OpeningFamily, variant: 'weak' | 'best'): HTMLE
   const titleRow = el('div', 'report-line-title-row');
   const labelWrap = el('div', 'report-family-title-wrap');
   const label = el('div', 'report-family-label');
-  label.textContent = family.displayLabel;
+  setMiddleTruncateText(label, family.displayLabel);
+  label.title = family.displayLabel;
   labelWrap.append(label);
+
+  const moveRow = el('div', 'report-family-move-row');
+  const moveLine = el('div', 'report-family-move-line');
+  moveLine.textContent = family.baseLine.label || family.baseLine.displayLabel;
+  moveRow.append(moveLine);
+  labelWrap.append(moveRow);
+
+  const transposedLines = family.baseLine.transpositionLabels;
+  if (transposedLines.length > 0) {
+    const allTranspositionLines = [family.baseLine.label || family.baseLine.displayLabel, ...transposedLines];
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'report-family-transpose-toggle';
+    toggleBtn.textContent = `${transposedLines.length} transposition${transposedLines.length === 1 ? '' : 's'}`;
+    toggleBtn.classList.add('tooltip-wide');
+    toggleBtn.classList.add('tooltip-html');
+    toggleBtn.setAttribute(
+      'data-tooltip',
+      ['Transpositions', ...allTranspositionLines]
+        .map(escapeHtml)
+        .join('<br>'),
+    );
+    moveRow.append(toggleBtn);
+  }
 
   const gamesBadge = el('span', 'report-line-games-badge');
   gamesBadge.textContent = `${formatNum(family.wdl.total)} games`;
-  gamesBadge.setAttribute('data-tooltip', 'Games in this opening base line.');
-  titleRow.append(labelWrap, gamesBadge);
+  gamesBadge.setAttribute('data-tooltip', 'Games in this final position (pooled across transpositions).');
+  const badges = el('div', 'report-family-badges');
+  badges.append(gamesBadge);
+  titleRow.append(labelWrap, badges);
   card.append(titleRow);
 
-  const baseLine = el('div', 'report-family-base-line');
-  baseLine.textContent = family.baseLine.label || family.baseLine.displayLabel;
-  card.append(baseLine);
+  const statsRow = el('div', 'report-family-stats');
+  statsRow.append(buildInlineWdlBar(family.wdl));
 
-  const stats = el('div', 'report-family-stats');
-  const priorityChip = document.createElement('span');
-  priorityChip.className = 'stat';
-  priorityChip.textContent = `Priority ${formatImpact(family.impact)}`;
-  if (family.impact >= 3) priorityChip.classList.add('bad');
-  else if (family.impact >= 1.5) priorityChip.classList.add('warn');
-  priorityChip.classList.add('tooltip-wide');
-  priorityChip.setAttribute(
-    'data-tooltip',
-    `Opening priority from aggregate score gap and frequency. Spread across continuations: ${family.continuationSpreadPct}%.`,
-  );
-
-  const winChip = document.createElement('span');
-  winChip.className = 'stat';
-  winChip.textContent = `Win ${family.winRate}%`;
-  if (family.winRate >= 55) winChip.classList.add('good');
-  else if (family.winRate <= 45) winChip.classList.add('bad');
-  winChip.setAttribute(
-    'data-tooltip',
-    `Opening record: ${family.wdl.wins}W ${family.wdl.draws}D ${family.wdl.losses}L (${family.wdl.total} games).`,
-  );
-  winChip.classList.add('tooltip-wide');
-
-  const deltaChip = document.createElement('span');
-  deltaChip.className = 'stat';
   const familyElo = eloSwingForWdl(family.wdl);
-  deltaChip.textContent = `~Elo Δ${formatSignedNum(familyElo)}`;
+  const deltaChip = document.createElement('span');
+  deltaChip.className = 'report-family-elo-badge';
+  deltaChip.textContent = `${formatSignedNum(familyElo)} elo`;
   if (familyElo > 0) deltaChip.classList.add('good');
   else if (familyElo < 0) deltaChip.classList.add('bad');
-  deltaChip.classList.add('tooltip-wide');
   deltaChip.setAttribute(
     'data-tooltip',
-    `Simple family estimate: (wins - losses) * 8 = (${family.wdl.wins} - ${family.wdl.losses}) * 8.`,
+    `Elo Δ: (${family.wdl.wins}W - ${family.wdl.losses}L) × 8 = ${formatSignedNum(familyElo)}`,
   );
-
-  stats.append(priorityChip, winChip, deltaChip);
-  card.append(stats);
-
-  const snippets = el('div', 'report-family-snippets');
-  const weakSnippets = variant === 'weak'
-    ? family.topWeakContinuations.slice(0, 1)
-    : family.topWeakContinuations;
-  for (const line of weakSnippets) {
-    snippets.append(buildFamilySnippet(line, 'Weak continuation', 'weak'));
-  }
-  if (variant === 'best' && family.topStrongContinuation) {
-    const alreadyInWeak = family.topWeakContinuations.some(line =>
-      line.color === family.topStrongContinuation!.color && line.label === family.topStrongContinuation!.label
-    );
-    if (!alreadyInWeak) {
-      snippets.append(buildFamilySnippet(family.topStrongContinuation, 'Strong continuation', 'strong'));
-    }
-  }
-  if (snippets.childElementCount > 0) {
-    card.append(snippets);
-  }
+  statsRow.append(deltaChip);
+  card.append(statsRow);
 
   return card;
 }
 
-function buildFamilySnippet(
-  line: OpeningLine,
-  label: string,
-  tone: 'weak' | 'strong',
-): HTMLElement {
-  const row = document.createElement('button');
-  row.type = 'button';
-  row.className = `report-family-snippet ${tone}`;
-  row.addEventListener('click', (e) => {
-    e.stopPropagation();
-    selectLine(line);
-  });
+function buildInlineWdlBar(wdl: WDL): HTMLElement {
+  const bar = el('div', 'report-wdl-bar-inline');
+  if (wdl.total === 0) return bar;
 
-  const left = el('div', 'report-family-snippet-left');
-  const kind = el('div', 'report-family-snippet-kind');
-  kind.textContent = label;
-  const moveLabel = el('div', 'report-family-snippet-line');
-  moveLabel.textContent = line.label || line.displayLabel;
-  left.append(kind, moveLabel);
+  const wPct = (wdl.wins / wdl.total) * 100;
+  const dPct = (wdl.draws / wdl.total) * 100;
+  const bPct = (wdl.losses / wdl.total) * 100;
 
-  const right = el('div', 'report-family-snippet-right');
-  const pri = document.createElement('span');
-  pri.textContent = `P ${formatImpact(line.impact)}`;
-  const win = document.createElement('span');
-  win.textContent = `W ${line.winRate}%`;
-  right.append(pri, win);
-
-  row.append(left, right);
-  return row;
+  if (wPct > 0) {
+    const wEl = el('div', 'bar-win');
+    wEl.style.width = `${wPct}%`;
+    setBarPctLabel(wEl, wPct);
+    bar.append(wEl);
+  }
+  if (dPct > 0) {
+    const dEl = el('div', 'bar-draw');
+    dEl.style.width = `${dPct}%`;
+    setBarPctLabel(dEl, dPct);
+    bar.append(dEl);
+  }
+  if (bPct > 0) {
+    const bEl = el('div', 'bar-loss');
+    bEl.style.width = `${bPct}%`;
+    setBarPctLabel(bEl, bPct);
+    bar.append(bEl);
+  }
+  bar.setAttribute('data-tooltip', `${wdl.wins}W ${wdl.draws}D ${wdl.losses}L`);
+  return bar;
 }
 
 function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void {
   const section = el('div', 'report-family-table-section');
   const table = el('div', 'report-family-table');
   const header = el('div', 'report-family-table-header');
-  type FamilySortKey = 'opening' | 'impact' | 'winRate' | 'games';
+  type FamilySortKey = 'opening' | 'games' | 'score' | 'eloDelta';
   type FamilySortDir = 'asc' | 'desc';
-  let sortKey: FamilySortKey = 'impact';
-  let sortDir: FamilySortDir = 'desc';
+  let sortKey: FamilySortKey = 'eloDelta';
+  let sortDir: FamilySortDir = 'asc';
 
   const hOpening = document.createElement('span');
   hOpening.className = 'sortable';
   hOpening.addEventListener('click', () => handleSort('opening'));
-  const hImpact = document.createElement('span');
-  hImpact.className = 'sortable';
-  hImpact.addEventListener('click', () => handleSort('impact'));
-  const hWin = document.createElement('span');
-  hWin.className = 'sortable';
-  hWin.addEventListener('click', () => handleSort('winRate'));
   const hGames = document.createElement('span');
   hGames.className = 'sortable';
   hGames.addEventListener('click', () => handleSort('games'));
-  header.append(hOpening, hImpact, hWin, hGames);
+  const hWdl = document.createElement('span');
+  hWdl.className = 'sortable';
+  hWdl.addEventListener('click', () => handleSort('score'));
+  const hElo = document.createElement('span');
+  hElo.className = 'sortable';
+  hElo.addEventListener('click', () => handleSort('eloDelta'));
+  header.append(hOpening, hGames, hWdl, hElo);
   table.append(header);
 
   function sortValue(family: OpeningFamily, key: FamilySortKey): number | string {
     if (key === 'opening') return family.displayLabel;
-    if (key === 'impact') return family.impact;
-    if (key === 'winRate') return family.winRate;
-    return family.wdl.total;
+    if (key === 'games') return family.wdl.total;
+    if (key === 'score') return family.adjustedScorePct;
+    return eloSwingForWdl(family.wdl);
   }
 
   function sortFamilies(rows: OpeningFamily[]): OpeningFamily[] {
@@ -1664,8 +1760,7 @@ function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void
         primary = sortDir === 'asc' ? an - bn : bn - an;
       }
       if (primary !== 0) return primary;
-      return b.impact - a.impact
-        || a.adjustedScorePct - b.adjustedScorePct
+      return eloSwingForWdl(a.wdl) - eloSwingForWdl(b.wdl)
         || b.wdl.total - a.wdl.total
         || a.displayLabel.localeCompare(b.displayLabel);
     });
@@ -1675,78 +1770,39 @@ function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void
     table.querySelectorAll('.report-family-row').forEach(r => r.remove());
 
     for (const family of sortFamilies(families)) {
-      const details = document.createElement('details');
-      details.className = 'report-family-row';
-
-      const summary = document.createElement('summary');
-      summary.className = 'report-family-summary';
-      summary.addEventListener('click', () => {
+      const row = el('div', 'report-family-row');
+      row.addEventListener('click', () => {
+        table.querySelectorAll('.report-family-row.selected').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
         selectLine(family.baseLine);
       });
-      const familyName = document.createElement('span');
-      familyName.className = 'report-family-summary-name';
-      familyName.textContent = family.displayLabel;
-      const impact = document.createElement('span');
-      impact.textContent = formatImpact(family.impact);
-      const win = document.createElement('span');
-      win.textContent = `${family.winRate}%`;
-      const games = document.createElement('span');
-      games.textContent = formatNum(family.wdl.total);
-      summary.append(familyName, impact, win, games);
-      details.append(summary);
 
-      const list = el('div', 'report-family-cont-list');
-      const baseRow = document.createElement('button');
-      baseRow.type = 'button';
-      baseRow.className = 'report-family-cont-base';
-      baseRow.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectLine(family.baseLine);
-      });
-      const basePrefix = el('span', 'report-family-cont-base-prefix');
-      basePrefix.textContent = 'Base';
-      const baseLabel = el('span', 'report-family-cont-base-label');
-      baseLabel.textContent = family.baseLine.label || family.baseLine.displayLabel;
-      baseRow.append(basePrefix, baseLabel);
-      list.append(baseRow);
+      const nameCell = el('div', 'report-family-name-cell');
+      const nameText = el('div', 'report-family-name-text');
+      setMiddleTruncateText(nameText, family.displayLabel);
+      nameText.title = family.displayLabel;
+      const moveLine = el('div', 'report-family-move-line');
+      moveLine.textContent = family.baseLine.label || family.baseLine.displayLabel;
+      moveLine.title = family.baseLine.label || family.baseLine.displayLabel;
+      nameCell.append(nameText, moveLine);
 
-      if (family.continuations.length === 0) {
-        const empty = el('div', 'report-family-cont-empty');
-        empty.textContent = 'No deeper continuations sampled yet.';
-        list.append(empty);
-      }
+      const gamesCell = document.createElement('span');
+      gamesCell.className = 'report-family-games';
+      gamesCell.textContent = formatNum(family.wdl.total);
 
-      for (const line of family.continuations) {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'report-family-cont-row';
-        row.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          selectLine(line);
-          lineViewIndex = Math.min(family.baseLine.ucis.length, lineFens.length - 1);
-          updateBoardForLine();
-        });
+      const wdlCell = buildInlineWdlBar(family.wdl);
 
-        const label = el('div', 'report-family-cont-label');
-        label.textContent = line.label || line.displayLabel;
-        const stats = el('div', 'report-family-cont-stats');
-        const impactChip = document.createElement('span');
-        impactChip.textContent = `P ${formatImpact(line.impact)}`;
-        const winChip = document.createElement('span');
-        winChip.textContent = `W ${line.winRate}%`;
-        const gamesChip = document.createElement('span');
-        gamesChip.textContent = `${formatNum(line.wdl.total)}g`;
-        stats.append(impactChip, winChip, gamesChip);
+      const familyElo = eloSwingForWdl(family.wdl);
+      const eloCell = document.createElement('span');
+      eloCell.className = 'report-family-elo';
+      eloCell.textContent = `${formatSignedNum(familyElo)} elo`;
+      if (familyElo > 0) eloCell.classList.add('good');
+      else if (familyElo < 0) eloCell.classList.add('bad');
 
-        row.append(label, stats);
-        list.append(row);
-      }
-
-      details.append(list);
-      table.append(details);
+      row.append(nameCell, gamesCell, wdlCell, eloCell);
+      table.append(row);
     }
+    scheduleReportPctLabelFit();
   }
 
   function handleSort(nextKey: FamilySortKey): void {
@@ -1754,7 +1810,7 @@ function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void
       sortDir = sortDir === 'desc' ? 'asc' : 'desc';
     } else {
       sortKey = nextKey;
-      sortDir = nextKey === 'opening' ? 'asc' : 'desc';
+      sortDir = nextKey === 'opening' ? 'asc' : 'asc';
     }
     updateHeaderIndicators();
     renderRows();
@@ -1767,13 +1823,13 @@ function renderFamilyTable(parent: HTMLElement, families: OpeningFamily[]): void
 
   function updateHeaderIndicators(): void {
     hOpening.textContent = indicatorLabel('Opening', 'opening');
-    hImpact.textContent = indicatorLabel('Priority', 'impact');
-    hWin.textContent = indicatorLabel('Win%', 'winRate');
     hGames.textContent = indicatorLabel('Games', 'games');
+    hWdl.textContent = indicatorLabel('Score', 'score');
+    hElo.textContent = indicatorLabel('Elo Δ', 'eloDelta');
     hOpening.classList.toggle('sort-active', sortKey === 'opening');
-    hImpact.classList.toggle('sort-active', sortKey === 'impact');
-    hWin.classList.toggle('sort-active', sortKey === 'winRate');
     hGames.classList.toggle('sort-active', sortKey === 'games');
+    hWdl.classList.toggle('sort-active', sortKey === 'score');
+    hElo.classList.toggle('sort-active', sortKey === 'eloDelta');
   }
 
   updateHeaderIndicators();
@@ -2111,6 +2167,7 @@ function updateBoardForLine(): void {
   if (!reportCg || !selectedLine) return;
 
   const fen = lineFens[lineViewIndex];
+  updateReportBoardEcoLabel(fen);
   const lastMove = lineLastMoves[lineViewIndex];
   reportCg.set({ fen, lastMove });
 
@@ -2160,6 +2217,33 @@ function updateBoardForLine(): void {
   renderContinuations(fen);
 
   renderSelectedLineGames();
+}
+
+function updateReportBoardEcoLabel(fen: string | null): void {
+  const ecoEl = document.querySelector('.report-board-eco') as HTMLElement | null;
+  if (!ecoEl) return;
+
+  if (!fen) {
+    clearMiddleTruncateText(ecoEl, 'Opening: —');
+    ecoEl.classList.add('placeholder');
+    ecoEl.setAttribute('title', 'No opening match for this position');
+    scheduleReportPctLabelFit();
+    return;
+  }
+
+  const opening = findOpeningByFen(fen);
+  if (!opening) {
+    clearMiddleTruncateText(ecoEl, 'Opening: —');
+    ecoEl.classList.add('placeholder');
+    ecoEl.setAttribute('title', 'No opening match for this position');
+    scheduleReportPctLabelFit();
+    return;
+  }
+
+  setMiddleTruncateText(ecoEl, opening.name);
+  ecoEl.classList.remove('placeholder');
+  ecoEl.setAttribute('title', opening.name);
+  scheduleReportPctLabelFit();
 }
 
 // ── Continuations ──
@@ -2232,16 +2316,24 @@ function renderContinuations(fen: string): void {
     const dPct = Math.round((move.draws / total) * 100);
     const bPct = 100 - wPct - dPct;
     const bar = el('div', 'report-cont-bar');
-    const wEl = el('span', 'bar-white');
-    wEl.style.width = `${wPct}%`;
-    if (wPct > 12) wEl.textContent = `${wPct}%`;
-    const dEl = el('span', 'bar-draw');
-    dEl.style.width = `${dPct}%`;
-    if (dPct > 8) dEl.textContent = `${dPct}%`;
-    const bEl = el('span', 'bar-black');
-    bEl.style.width = `${bPct}%`;
-    if (bPct > 12) bEl.textContent = `${bPct}%`;
-    bar.append(wEl, dEl, bEl);
+    if (wPct > 0) {
+      const wEl = el('span', 'bar-piece-white');
+      wEl.style.width = `${wPct}%`;
+      setBarPctLabel(wEl, wPct);
+      bar.append(wEl);
+    }
+    if (dPct > 0) {
+      const dEl = el('span', 'bar-draw-neutral');
+      dEl.style.width = `${dPct}%`;
+      setBarPctLabel(dEl, dPct);
+      bar.append(dEl);
+    }
+    if (bPct > 0) {
+      const bEl = el('span', 'bar-piece-black');
+      bEl.style.width = `${bPct}%`;
+      setBarPctLabel(bEl, bPct);
+      bar.append(bEl);
+    }
 
     const lockBtn = document.createElement('button');
     lockBtn.className = `report-cont-lock${locked ? ' locked' : ''}`;
@@ -2253,6 +2345,7 @@ function renderContinuations(fen: string): void {
     row.append(san, pickBar, games, bar, lockBtn);
     container.append(row);
   }
+  scheduleReportPctLabelFit();
 }
 
 
@@ -2463,6 +2556,15 @@ function formatShortDate(dateStr: string): string {
     return `${parseInt(parts[2], 10)}/${m}/${yy}`;
   }
   return `${m}/${yy}`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function formatNum(n: number): string {

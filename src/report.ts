@@ -16,12 +16,17 @@ export interface WDL {
   total: number;
 }
 
+export type LineAggregationMode = 'line' | 'position';
+
 export interface OpeningLine {
   label: string;
   displayLabel: string;
   moves: string[];   // SAN
   ucis: string[];    // UCI
   wdl: WDL;
+  edgeWdl: WDL;
+  positionWdl: WDL;
+  transpositionLabels: string[];
   winRate: number;
   endFen: string;
   color: 'white' | 'black';
@@ -105,6 +110,10 @@ function emptyWDL(): WDL {
   return { wins: 0, draws: 0, losses: 0, total: 0 };
 }
 
+function copyWDL(wdl: WDL): WDL {
+  return { wins: wdl.wins, draws: wdl.draws, losses: wdl.losses, total: wdl.total };
+}
+
 function userResult(game: GameMeta): 'win' | 'draw' | 'loss' {
   if (game.re === 'd') return 'draw';
   if (game.re === 'w') return game.uw ? 'win' : 'loss';
@@ -136,6 +145,14 @@ function positionKey(fen: string): string {
   return fen.split(' ').slice(0, 4).join(' ');
 }
 
+function transpositionIndexKey(
+  color: 'white' | 'black',
+  ply: number,
+  fen: string,
+): string {
+  return `${color}|${ply}|${positionKey(fen)}`;
+}
+
 // ── Opening Tree Walk ──
 
 type QueryFn = (fen: string) => ExplorerResponse | null;
@@ -143,7 +160,8 @@ type MoveGameIndicesFn = (fen: string, uci: string) => number[];
 type GameByIndexFn = (idx: number) => GameMeta | undefined;
 
 const MIN_GAMES_FOR_LINE = 5;
-const MIN_DEPTH = 2; // at least 1 move per side
+const MIN_GAMES_FOR_FAMILY = 10;
+const MIN_DEPTH = 4; // at least 2 moves per side
 const BASE_MAX_PLY = 8;
 const ADAPTIVE_MAX_PLY = 10;
 const ADAPTIVE_MIN_NODE_GAMES = 20;
@@ -151,10 +169,14 @@ const PRIOR_WEIGHT = 12;
 const MAX_WEAK_FAMILIES = 5;
 const MAX_BEST_FAMILIES = 3;
 const MAX_WEAK_CONTINUATION_SNIPPETS = 2;
+const CRITICAL_CONTINUATION_MIN_GAMES = 12;
+const CRITICAL_CONTINUATION_GAP_DELTA_PTS = 12;
+const CRITICAL_CONTINUATION_MIN_IMPACT_RATIO = 0.75;
 
 function walkOpenings(
   isWhite: boolean,
   queryFn: QueryFn,
+  aggregationMode: LineAggregationMode,
 ): OpeningLine[] {
   const lines: OpeningLine[] = [];
   const visited = new Set<string>(); // dedup transpositions
@@ -164,7 +186,7 @@ function walkOpenings(
     const label = moves.join(' ');
     if (lines.some(l => l.label === label)) return;
 
-    const line = makeOpeningLine(isWhite, moves, ucis, endFen, queryFn);
+    const line = makeOpeningLine(isWhite, moves, ucis, endFen, queryFn, aggregationMode);
     lines.push(line);
   }
 
@@ -233,11 +255,10 @@ function walkOpenings(
   return lines;
 }
 
-function computeLineWdl(
+function computeEdgeWdl(
   ucis: string[],
   isWhite: boolean,
   queryFn: QueryFn,
-  endFen: string,
 ): WDL {
   const wdl = emptyWDL();
   if (ucis.length > 0) {
@@ -266,26 +287,46 @@ function computeLineWdl(
     }
   }
 
-  // Fallback: sum all continuations at end position.
-  if (wdl.total === 0) {
-    const data = queryFn(endFen);
-    if (data) {
-      for (const m of data.moves) {
-        wdl.total += m.white + m.draws + m.black;
-        if (isWhite) {
-          wdl.wins += m.white;
-          wdl.draws += m.draws;
-          wdl.losses += m.black;
-        } else {
-          wdl.wins += m.black;
-          wdl.draws += m.draws;
-          wdl.losses += m.white;
-        }
+  return wdl;
+}
+
+function computePositionWdl(
+  endFen: string,
+  isWhite: boolean,
+  queryFn: QueryFn,
+): WDL {
+  const wdl = emptyWDL();
+  const data = queryFn(endFen);
+  if (data) {
+    for (const m of data.moves) {
+      wdl.total += m.white + m.draws + m.black;
+      if (isWhite) {
+        wdl.wins += m.white;
+        wdl.draws += m.draws;
+        wdl.losses += m.black;
+      } else {
+        wdl.wins += m.black;
+        wdl.draws += m.draws;
+        wdl.losses += m.white;
       }
     }
   }
-
   return wdl;
+}
+
+function computeLineWdl(
+  ucis: string[],
+  isWhite: boolean,
+  queryFn: QueryFn,
+  endFen: string,
+  aggregationMode: LineAggregationMode,
+): { wdl: WDL; edgeWdl: WDL; positionWdl: WDL } {
+  const edgeWdl = computeEdgeWdl(ucis, isWhite, queryFn);
+  const positionWdl = computePositionWdl(endFen, isWhite, queryFn);
+  const wdl = aggregationMode === 'position'
+    ? (positionWdl.total > 0 ? copyWDL(positionWdl) : copyWDL(edgeWdl))
+    : (edgeWdl.total > 0 ? copyWDL(edgeWdl) : copyWDL(positionWdl));
+  return { wdl, edgeWdl, positionWdl };
 }
 
 function makeOpeningLine(
@@ -294,8 +335,9 @@ function makeOpeningLine(
   ucis: string[],
   endFen: string,
   queryFn: QueryFn,
+  aggregationMode: LineAggregationMode,
 ): OpeningLine {
-  const wdl = computeLineWdl(ucis, isWhite, queryFn, endFen);
+  const { wdl, edgeWdl, positionWdl } = computeLineWdl(ucis, isWhite, queryFn, endFen, aggregationMode);
   const label = moves.join(' ');
   const openingInfo = findOpeningForLine(endFen, ucis);
   const displayLabel = openingInfo ? openingInfo.name : label;
@@ -306,6 +348,9 @@ function makeOpeningLine(
     moves,
     ucis,
     wdl,
+    edgeWdl,
+    positionWdl,
+    transpositionLabels: [],
     winRate: winRate(wdl),
     endFen,
     color: isWhite ? 'white' : 'black',
@@ -324,6 +369,7 @@ function makeOpeningLine(
 function normalizeAndDedupeOpenings(
   lines: OpeningLine[],
   queryFn: QueryFn,
+  aggregationMode: LineAggregationMode,
 ): OpeningLine[] {
   const dedup = new Map<string, OpeningLine>();
 
@@ -342,7 +388,7 @@ function normalizeAndDedupeOpenings(
     const fens = buildLineFens(ucis);
     if (!fens) continue;
     const endFen = fens[fens.length - 1];
-    const normalized = makeOpeningLine(line.color === 'white', moves, ucis, endFen, queryFn);
+    const normalized = makeOpeningLine(line.color === 'white', moves, ucis, endFen, queryFn, aggregationMode);
     const key = `${normalized.color}|${positionKey(normalized.endFen)}`;
     const existing = dedup.get(key);
     if (!existing) {
@@ -494,6 +540,69 @@ function buildLineExamples(
   return { wins, losses, draws, all };
 }
 
+type TranspositionLabelIndex = Map<string, Map<string, number>>;
+
+function buildTranspositionLabelIndex(
+  games: readonly GameMeta[],
+  maxPly: number,
+): TranspositionLabelIndex {
+  const index: TranspositionLabelIndex = new Map();
+
+  for (const game of games) {
+    if (!game.mv) continue;
+    const ucis = game.mv.split(/\s+/).filter(Boolean);
+    if (ucis.length === 0) continue;
+
+    const color: 'white' | 'black' = game.uw ? 'white' : 'black';
+    const chess = Chess.default();
+    const sans: string[] = [];
+    const limit = Math.min(ucis.length, maxPly);
+
+    for (let i = 0; i < limit; i++) {
+      const move = parseUci(ucis[i]);
+      if (!move) break;
+      let san: string;
+      try {
+        san = makeSan(chess, move);
+      } catch {
+        break;
+      }
+      chess.play(move);
+      sans.push(san);
+
+      const key = transpositionIndexKey(color, i + 1, makeFen(chess.toSetup()));
+      let labelCounts = index.get(key);
+      if (!labelCounts) {
+        labelCounts = new Map();
+        index.set(key, labelCounts);
+      }
+      const label = sans.join(' ');
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+  }
+
+  return index;
+}
+
+function attachTranspositionLabels(
+  lines: OpeningLine[],
+  index: TranspositionLabelIndex,
+): void {
+  for (const line of lines) {
+    const key = transpositionIndexKey(line.color, line.ucis.length, line.endFen);
+    const labelCounts = index.get(key);
+    if (!labelCounts) {
+      line.transpositionLabels = [];
+      continue;
+    }
+    const labels = [...labelCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([label]) => label)
+      .filter(label => label !== line.label);
+    line.transpositionLabels = labels;
+  }
+}
+
 function adjustedScore(raw: number, total: number, globalScore: number): number {
   return total > 0
     ? ((raw * total) + (globalScore * PRIOR_WEIGHT)) / (total + PRIOR_WEIGHT)
@@ -535,6 +644,11 @@ function lineStartsWith(line: OpeningLine, prefix: OpeningLine): boolean {
   return true;
 }
 
+function impactGapPoints(line: OpeningLine): number {
+  if (line.wdl.total <= 0) return 0;
+  return (line.impact / line.wdl.total) * 100;
+}
+
 function aggregateFamilies(
   lines: OpeningLine[],
   color: 'white' | 'black',
@@ -555,14 +669,41 @@ function aggregateFamilies(
 
   const families: OpeningFamily[] = [];
   for (const [key, groupedLines] of grouped) {
+    const totalGames = Math.max(...groupedLines.map(l => l.wdl.total));
+    if (totalGames < MIN_GAMES_FOR_FAMILY) continue;
+
     const weakBaseCandidates = groupedLines.filter(line => line.impact > 0);
     const basePool = weakBaseCandidates.length > 0 ? weakBaseCandidates : groupedLines;
-    const baseLine = [...basePool].sort((a, b) =>
+    const structuralBase = [...basePool].sort((a, b) =>
       a.ucis.length - b.ucis.length
         || b.impact - a.impact
         || b.wdl.total - a.wdl.total
         || a.label.localeCompare(b.label)
     )[0];
+    let baseLine = structuralBase;
+
+    // If a deeper continuation is dramatically weaker with enough sample size,
+    // let that line drive the family card instead of always preferring shortest.
+    if (weakBaseCandidates.length > 1) {
+      const catastrophic = [...weakBaseCandidates].sort((a, b) =>
+        impactGapPoints(b) - impactGapPoints(a)
+          || b.impact - a.impact
+          || b.wdl.total - a.wdl.total
+          || b.ucis.length - a.ucis.length
+          || a.label.localeCompare(b.label)
+      )[0];
+
+      const structuralGap = impactGapPoints(structuralBase);
+      const catastrophicGap = impactGapPoints(catastrophic);
+      const significantGap = catastrophicGap - structuralGap >= CRITICAL_CONTINUATION_GAP_DELTA_PTS;
+      const enoughGames = catastrophic.wdl.total >= CRITICAL_CONTINUATION_MIN_GAMES;
+      const enoughImpact = catastrophic.impact >= structuralBase.impact * CRITICAL_CONTINUATION_MIN_IMPACT_RATIO;
+      const deeperLine = catastrophic.ucis.length > structuralBase.ucis.length;
+      if (deeperLine && enoughGames && significantGap && enoughImpact) {
+        baseLine = catastrophic;
+      }
+    }
+
     const continuationLines = groupedLines.filter(line => lineStartsWith(line, baseLine));
     const sortedWeak = [...continuationLines].sort(familyWeakSort);
     const sortedStrong = [...continuationLines].sort((a, b) => familyStrongSort(a, b, globalScore));
@@ -586,12 +727,13 @@ function aggregateFamilies(
       : 0;
 
     const topStrong = sortedStrong.find(line => lineStrength(line, globalScore) > 0) ?? null;
+    const displayLabel = baseLine.openingName ?? rootName;
     const family: OpeningFamily = {
       key,
       color,
       eco,
       rootName,
-      displayLabel: rootName,
+      displayLabel,
       baseLine,
       wdl,
       winRate: winRate(wdl),
@@ -736,6 +878,7 @@ export function generateReport(
   moveGameIndicesFn?: MoveGameIndicesFn,
   gameByIndexFn?: GameByIndexFn,
   sideFilter?: 'white' | 'black',
+  aggregationMode: LineAggregationMode = 'position',
 ): ReportData {
   const overall = emptyWDL();
   const asWhite = emptyWDL();
@@ -797,20 +940,23 @@ export function generateReport(
   const globalScore = scoreRate(overall);
   const whiteBaselineScore = asWhite.total > 0 ? scoreRate(asWhite) : globalScore;
   const blackBaselineScore = asBlack.total > 0 ? scoreRate(asBlack) : globalScore;
+  const transpositionIndex = buildTranspositionLabelIndex(games, ADAPTIVE_MAX_PLY);
   let whiteOpenings: OpeningLine[] = [];
   let blackOpenings: OpeningLine[] = [];
 
   if (sideFilter !== 'black') {
     syncColorFilter?.('white');
-    const rawWhite = walkOpenings(true, queryFn);
-    whiteOpenings = normalizeAndDedupeOpenings(rawWhite, queryFn);
+    const rawWhite = walkOpenings(true, queryFn, aggregationMode);
+    whiteOpenings = normalizeAndDedupeOpenings(rawWhite, queryFn, aggregationMode);
+    attachTranspositionLabels(whiteOpenings, transpositionIndex);
     enrichOpeningLines(whiteOpenings, whiteBaselineScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 
   if (sideFilter !== 'white') {
     syncColorFilter?.('black');
-    const rawBlack = walkOpenings(false, queryFn);
-    blackOpenings = normalizeAndDedupeOpenings(rawBlack, queryFn);
+    const rawBlack = walkOpenings(false, queryFn, aggregationMode);
+    blackOpenings = normalizeAndDedupeOpenings(rawBlack, queryFn, aggregationMode);
+    attachTranspositionLabels(blackOpenings, transpositionIndex);
     enrichOpeningLines(blackOpenings, blackBaselineScore, queryFn, moveGameIndicesFn, gameByIndexFn);
   }
 

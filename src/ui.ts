@@ -62,6 +62,7 @@ let modeChangeCb: ModeChangeCallback | null = null;
 let currentConfig: AppConfig;
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const BAR_PCT_LABEL_ATTR = 'data-pct-label';
 
 // Track which UCI was played next from the currently viewed position
 let nextMoveUci: string | null = null;
@@ -76,6 +77,25 @@ let loadedGame: GameMeta | null = null;
 let lastEngineLineCount = 3;
 type HistoryLinesView = 'history' | 'lines';
 let historyLinesView: HistoryLinesView = 'history';
+
+function fitExplorerBarLabels(root: ParentNode): void {
+  const segments = root.querySelectorAll<HTMLElement>(`.explorer-bar [${BAR_PCT_LABEL_ATTR}]`);
+  for (const segment of segments) {
+    const label = segment.getAttribute(BAR_PCT_LABEL_ATTR) ?? '';
+    if (!label) {
+      segment.textContent = '';
+      continue;
+    }
+    segment.textContent = label;
+    if (segment.scrollWidth > segment.clientWidth) {
+      segment.textContent = '';
+    }
+  }
+}
+
+function scheduleExplorerBarLabelFit(root: ParentNode): void {
+  requestAnimationFrame(() => fitExplorerBarLabels(root));
+}
 
 
 export function initUI(
@@ -1905,9 +1925,9 @@ function renderMoveRows(
       <span class="explorer-pct"><span class="pct-fill" style="width:${pctNum}%"></span><span class="pct-label">${pct}%</span></span>
       <span class="explorer-games">${formatGames(total)}</span>
       <span class="explorer-bar">
-        <span class="bar-white" style="width:${wPct}%">${wPct > 12 ? wPct + '%' : ''}</span>
-        <span class="bar-draw" style="width:${dPct}%">${dPct > 8 ? dPct + '%' : ''}</span>
-        <span class="bar-black" style="width:${bPct}%">${bPct > 12 ? bPct + '%' : ''}</span>
+        <span class="bar-white" style="width:${wPct}%" ${BAR_PCT_LABEL_ATTR}="${wPct}%">${wPct}%</span>
+        <span class="bar-draw-neutral" style="width:${dPct}%" ${BAR_PCT_LABEL_ATTR}="${dPct}%">${dPct}%</span>
+        <span class="bar-black" style="width:${bPct}%" ${BAR_PCT_LABEL_ATTR}="${bPct}%">${bPct}%</span>
       </span>
       <button class="lock-btn ${locked ? 'locked' : ''}"
               data-uci="${move.uci}" data-fen="${encodeURIComponent(fen)}"
@@ -1936,6 +1956,7 @@ function renderMoveRows(
   const container = document.createElement('div');
   container.innerHTML = html;
   while (container.firstChild) el.append(container.firstChild);
+  scheduleExplorerBarLabelFit(el);
 
   wireExplorerRowEvents(el, fen);
 }
@@ -2979,7 +3000,8 @@ function initTooltips(): void {
     // Data-tooltip (plain text)
     const target = el.closest?.('[data-tooltip]') as HTMLElement | null;
     if (!target) return;
-    showPopup(target, target.getAttribute('data-tooltip')!, false);
+    const isHtmlTooltip = target.classList.contains('tooltip-html');
+    showPopup(target, target.getAttribute('data-tooltip')!, isHtmlTooltip);
   }, true);
 
   document.addEventListener('mouseleave', (e) => {
