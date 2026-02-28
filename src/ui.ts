@@ -776,105 +776,10 @@ function renderConfigPanel(): void {
   displayGrid.append(evalChip, badgesChip, explorerChip, engineLinesChip);
   displaySection.append(displayGrid);
 
-  // ── Dropdowns row (Ratings + Time controls + Help) ──
-  const dropdownRow = document.createElement('div');
-  dropdownRow.className = 'settings-dropdown-row';
-
-  const ratingsDropdown = renderMultiDropdown(
-    'Ratings',
-    RATING_OPTIONS.map(r => ({ value: String(r), label: String(r) })),
-    currentConfig.ratings.map(String),
-    (selected) => {
-      currentConfig.ratings = selected.map(Number).sort((a, b) => a - b);
-      configChangeCb(currentConfig);
-    },
-    summarizeRatings,
-  );
-
-  const speedsDropdown = renderMultiDropdown(
-    'Time controls',
-    SPEED_OPTIONS.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) })),
-    currentConfig.speeds,
-    (selected) => {
-      currentConfig.speeds = selected;
-      configChangeCb(currentConfig);
-    },
-    summarizeSpeeds,
-  );
-
-  dropdownRow.append(ratingsDropdown, speedsDropdown);
-
-  inlineEl.append(displaySection, dropdownRow);
-}
-
-function summarizeRatings(selected: string[]): string {
-  if (selected.length === 0) return 'None';
-  if (selected.length === RATING_OPTIONS.length) return 'All';
-  const nums = selected.map(Number).sort((a, b) => a - b);
-  return `${nums[0]}–${nums[nums.length - 1]}`;
-}
-
-function summarizeSpeeds(selected: string[]): string {
-  if (selected.length === 0) return 'None';
-  if (selected.length === SPEED_OPTIONS.length) return 'All';
-  return selected.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(', ');
-}
-
-function renderMultiDropdown(
-  label: string,
-  options: { value: string; label: string }[],
-  selected: string[],
-  onChange: (selected: string[]) => void,
-  summarize: (selected: string[]) => string,
-): HTMLElement {
-  const wrap = document.createElement('div');
-  wrap.className = 'multi-dropdown';
-
-  const btn = document.createElement('button');
-  btn.className = 'multi-dropdown-btn';
-  btn.innerHTML = `<span class="multi-dropdown-label">${label}</span><span class="multi-dropdown-summary">${summarize(selected)}</span><svg class="multi-dropdown-chevron" viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
-
-  const panel = document.createElement('div');
-  panel.className = 'multi-dropdown-panel hidden';
-  panel.addEventListener('click', (e) => e.stopPropagation());
-
-  for (const opt of options) {
-    const row = document.createElement('label');
-    row.className = 'multi-dropdown-option';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = selected.includes(opt.value);
-    cb.addEventListener('change', () => {
-      const current = new Set(selected);
-      if (cb.checked) current.add(opt.value);
-      else current.delete(opt.value);
-      selected = Array.from(current);
-      onChange(selected);
-      btn.querySelector('.multi-dropdown-summary')!.textContent = summarize(selected);
-    });
-    const text = document.createElement('span');
-    text.textContent = opt.label;
-    row.append(cb, text);
-    panel.append(row);
-  }
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = !panel.classList.contains('hidden');
-    closeAllDropdowns();
-    if (!isOpen) {
-      panel.classList.remove('hidden');
-      wrap.classList.add('open');
-    }
-  });
-
-  wrap.append(btn, panel);
-  return wrap;
+  inlineEl.append(displaySection);
 }
 
 function closeAllDropdowns(): void {
-  document.querySelectorAll('.multi-dropdown-panel').forEach(p => p.classList.add('hidden'));
-  document.querySelectorAll('.multi-dropdown').forEach(d => d.classList.remove('open'));
   document.querySelectorAll('.explorer-cog-popover').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.engine-lines-config').forEach(p => p.classList.add('hidden'));
 }
@@ -2081,11 +1986,12 @@ export function updateExplorerPanel(): void {
   cogWrap.className = 'explorer-cog-wrap';
   const cogBtn = document.createElement('button');
   cogBtn.className = 'explorer-cog-btn';
-  cogBtn.title = 'Bot settings';
+  cogBtn.title = 'Explorer settings';
   cogBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.61 3.61 0 0112 15.6z"/></svg>';
 
   const popover = document.createElement('div');
   popover.className = 'explorer-cog-popover hidden';
+  popover.addEventListener('click', (e) => e.stopPropagation());
 
   // Top moves slider
   const topNLabel = document.createElement('label');
@@ -2137,7 +2043,51 @@ export function updateExplorerPanel(): void {
     weightSegment.append(btn);
   }
 
-  popover.append(topNLabel, topNSlider, playRateLabel, playRateSlider, weightLabel, weightSegment);
+  // Rating chips
+  const ratingsLabel = document.createElement('label');
+  ratingsLabel.className = 'cog-popover-label';
+  ratingsLabel.textContent = 'Ratings';
+  const ratingsGrid = document.createElement('div');
+  ratingsGrid.className = 'chip-grid';
+  for (const r of RATING_OPTIONS) {
+    const chip = document.createElement('button');
+    chip.className = 'chip chip-sm';
+    if (currentConfig.ratings.includes(r)) chip.classList.add('selected');
+    chip.textContent = String(r);
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('selected');
+      currentConfig.ratings = Array.from(ratingsGrid.querySelectorAll('.chip.selected'))
+        .map(c => Number(c.textContent)).sort((a, b) => a - b);
+      configChangeCb(currentConfig);
+    });
+    ratingsGrid.append(chip);
+  }
+
+  // Time control chips
+  const speedsLabel = document.createElement('label');
+  speedsLabel.className = 'cog-popover-label';
+  speedsLabel.textContent = 'Time controls';
+  const speedsGrid = document.createElement('div');
+  speedsGrid.className = 'chip-grid';
+  for (const s of SPEED_OPTIONS) {
+    const chip = document.createElement('button');
+    chip.className = 'chip chip-sm';
+    if (currentConfig.speeds.includes(s)) chip.classList.add('selected');
+    chip.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+    chip.dataset.speed = s;
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('selected');
+      currentConfig.speeds = Array.from(speedsGrid.querySelectorAll('.chip.selected'))
+        .map(c => (c as HTMLElement).dataset.speed!);
+      configChangeCb(currentConfig);
+    });
+    speedsGrid.append(chip);
+  }
+
+  const divider = document.createElement('hr');
+  divider.className = 'cog-popover-divider';
+
+  popover.append(ratingsLabel, ratingsGrid, speedsLabel, speedsGrid, divider, topNLabel, topNSlider, playRateLabel, playRateSlider, weightLabel, weightSegment);
 
   cogBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2146,9 +2096,9 @@ export function updateExplorerPanel(): void {
     if (!isOpen) popover.classList.remove('hidden');
   });
 
-  cogWrap.append(cogBtn, popover);
+  cogWrap.append(cogBtn);
   infoBar.append(cogWrap);
-  el.append(infoBar);
+  el.append(infoBar, popover);
 
   if (!showContent) {
     let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
