@@ -56,13 +56,13 @@ export const DEFAULT_CONFIG: AppConfig = {
   speeds: ['blitz', 'rapid', 'classical'],
   topMoves: 5,
   playerColor: 'white',
-  showEval: false,
+  showEval: true,
   botWeighting: 'weighted',
   botMinPlayRatePct: 5,
-  enabledAlerts: [],
-  showMoveBadges: false,
-  showExplorer: false,
-  engineLineCount: 0,
+  enabledAlerts: ['danger', 'opportunity', 'trap'],
+  showMoveBadges: true,
+  showExplorer: true,
+  engineLineCount: 1,
 };
 
 export const RATING_OPTIONS = [400, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500];

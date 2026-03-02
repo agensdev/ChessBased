@@ -28,6 +28,7 @@ import { getExplorerData, getExplorerCache } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
 import { formatScore } from './engine';
 import type { EngineLine } from './engine';
+import { onLockMoveForOnboarding } from './onboarding';
 import { Chess } from 'chessops/chess';
 import { parseFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
@@ -1878,6 +1879,7 @@ function wireExplorerRowEvents(el: HTMLElement, fen: string): void {
         if (lockMove(btnFen, uci)) {
           renderSystemPicker();
           openingChangeCb?.();
+          onLockMoveForOnboarding();
         }
       }
       updateExplorerPanel();
@@ -2106,7 +2108,7 @@ export function updateExplorerPanel(): void {
     for (let i = 0; i < EXPLORER_ROWS; i++) {
       html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
     }
-    html += '<div class="explorer-hint">Click to show moves</div>';
+    html += '<div class="explorer-hint">Moves hidden while you think \u2014 click to peek</div>';
     html += '</div>';
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -2122,6 +2124,16 @@ export function updateExplorerPanel(): void {
   const showBadges = currentConfig.showMoveBadges && moves.length > 0;
   const result = showBadges ? currentAnalysis() : null;
   const analysis = result?.analysis ?? null;
+
+  if (showBadges && analysis) {
+    const legend = document.createElement('div');
+    legend.className = 'badge-legend';
+    legend.innerHTML =
+      '<span class="badge-legend-item"><span class="badge-legend-dot dot-best"></span> Best</span>' +
+      '<span class="badge-legend-item"><span class="badge-legend-dot dot-blunder"></span> Mistake</span>' +
+      '<span class="badge-legend-item"><span class="badge-legend-dot dot-trap"></span> Trap</span>';
+    el.appendChild(legend);
+  }
 
   renderMoveRows(moves, fen, analysis, el);
   updateRecentGamesPanel();
@@ -3036,6 +3048,7 @@ export function toggleLockCurrentMove(): void {
     if (lockMove(fen, nextMoveUci)) {
       renderSystemPicker();
       openingChangeCb?.();
+      onLockMoveForOnboarding();
     }
   }
   updateExplorerPanel();
