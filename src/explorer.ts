@@ -6,6 +6,12 @@ let pending: { promise: Promise<ExplorerResponse>; fen: string } | null = null;
 
 const MAX_RETRIES = 5;
 
+let onRetry: ((attempt: number, maxRetries: number) => void) | null = null;
+
+export function setRetryListener(cb: (attempt: number, maxRetries: number) => void): void {
+  onRetry = cb;
+}
+
 async function fetchExplorer(
   fen: string,
   config: AppConfig,
@@ -19,13 +25,26 @@ async function fetchExplorer(
     recentGames: '0',
   });
 
-  const res = await fetch(`${BASE_URL}?${params}`);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}?${params}`);
+  } catch {
+    // CORS block on 429 — fetch throws TypeError before we can read status
+    if (attempt >= MAX_RETRIES) {
+      throw new Error('Explorer API rate limited after max retries');
+    }
+    onRetry?.(attempt + 1, MAX_RETRIES);
+    const delay = 2000 * Math.pow(2, attempt);
+    await new Promise((r) => setTimeout(r, delay));
+    return fetchExplorer(fen, config, attempt + 1);
+  }
 
   if (res.status === 429) {
     if (attempt >= MAX_RETRIES) {
       throw new Error('Explorer API rate limited after max retries');
     }
-    const delay = 2000 * Math.pow(2, attempt); // exponential backoff: 2s, 4s, 8s, 16s, 32s
+    onRetry?.(attempt + 1, MAX_RETRIES);
+    const delay = 2000 * Math.pow(2, attempt);
     await new Promise((r) => setTimeout(r, delay));
     return fetchExplorer(fen, config, attempt + 1);
   }

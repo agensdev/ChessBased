@@ -852,7 +852,7 @@ function buildParentContext(
   playedUci: string,
   cache: Map<string, ExplorerResponse>,
 ): ParentContext | undefined {
-  const parentData = cache.get(parentFen);
+  const parentData = cache.get(fenKey(parentFen));
   if (!parentData || parentData.moves.length === 0) return undefined;
   const parentSide = parentFen.split(' ')[1] as 'w' | 'b';
   return { parentMoves: parentData.moves, playedUci, parentSide };
@@ -861,7 +861,7 @@ function buildParentContext(
 function historyBadge(moveIndex: number, history: { uci: string; fen: string }[]): string {
   const fenBefore = moveIndex === 0 ? STARTING_FEN : history[moveIndex - 1].fen;
   const cache = getExplorerCache();
-  const explorerData = cache.get(fenBefore);
+  const explorerData = cache.get(fenKey(fenBefore));
   if (!explorerData || explorerData.moves.length === 0) return '';
 
   // Build parent context: the position before fenBefore, and the move that led to fenBefore
@@ -1266,7 +1266,7 @@ function refreshEngineHighlights(): void {
 
 let explorerFiltersOpen = false;
 let recentGamesFiltersOpen = false;
-let personalColorFilter: 'both' | 'white' | 'black' = 'both';
+let personalColorFilter: 'both' | 'white' | 'black' = 'white';
 let filterClickOutsideHandler: ((e: MouseEvent) => void) | null = null;
 
 
@@ -1910,12 +1910,38 @@ function wireExplorerRowEvents(el: HTMLElement, fen: string): void {
   }
 }
 
+function boardFen(): string {
+  const history = getMoveHistory();
+  const vi = getViewIndex();
+  if (vi === 0) return STARTING_FEN;
+  return history[vi - 1].fen;
+}
+
+function fenKey(fen: string): string {
+  return fen.split(' ').slice(0, 4).join(' ');
+}
+
 export function updateExplorerPanel(): void {
   const el = document.getElementById('explorer-moves')!;
   el.innerHTML = '';
 
   const mode = getExplorerMode();
-  const { fen } = getExplorerData();
+  const { fen, error } = getExplorerData();
+  const currentBoardFen = boardFen();
+
+  // Explorer data doesn't match the board — show loading skeleton
+  if (mode === 'database' && !error && fenKey(fen) !== fenKey(currentBoardFen)) {
+    let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+    html += '<div class="explorer-list explorer-skeleton">';
+    for (let i = 0; i < EXPLORER_ROWS; i++) {
+      html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
+    }
+    html += '</div>';
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    while (container.firstChild) el.append(container.firstChild);
+    return;
+  }
 
   if (mode === 'personal') {
     if (!hasPersonalData()) {
@@ -1946,7 +1972,7 @@ export function updateExplorerPanel(): void {
       el.append(infoWrap);
     }
 
-    const personalData = queryPersonalExplorer(fen);
+    const personalData = queryPersonalExplorer(currentBoardFen);
     const moves = personalData?.moves ?? [];
     if (moves.length === 0) {
       const noData = document.createElement('div');
@@ -1959,7 +1985,7 @@ export function updateExplorerPanel(): void {
     }
 
     // No analysis badges in personal mode
-    renderMoveRows(moves, fen, null, el);
+    renderMoveRows(moves, currentBoardFen, null, el);
     updateRecentGamesPanel();
     return;
   }
@@ -2102,22 +2128,46 @@ export function updateExplorerPanel(): void {
   infoBar.append(cogWrap);
   el.append(infoBar, popover);
 
-  if (!showContent) {
+  if (error || !showContent) {
+    const loading = !data && !error;
     let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
-    html += '<div class="explorer-list explorer-skeleton">';
+    html += `<div class="explorer-list explorer-skeleton${loading ? '' : ' skeleton-static'}">`;
     for (let i = 0; i < EXPLORER_ROWS; i++) {
-      html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
+      html += `<div class="explorer-move${loading ? ' skeleton-row' : ''}">&nbsp;</div>`;
     }
-    html += '<div class="explorer-hint">Moves hidden while you think \u2014 click to peek</div>';
+    if (error) {
+      const isRetrying = error.includes('retrying');
+      html += '<div class="explorer-hint explorer-hint-error">';
+      if (isRetrying) {
+        html += '<div class="explorer-error-spinner"></div>';
+        html += `<span>${error}</span>`;
+        html += '<span class="explorer-error-sub">Retrying automatically</span>';
+      } else {
+        html += '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        html += '<span>Could not reach Lichess explorer</span>';
+      }
+      if (hasPersonalData()) {
+        html += '<button class="btn btn-sm explorer-error-switch">Switch to My Games</button>';
+      }
+      html += '</div>';
+    } else {
+      html += '<div class="explorer-hint">Moves hidden while you think \u2014 click to peek</div>';
+    }
     html += '</div>';
     const container = document.createElement('div');
     container.innerHTML = html;
     while (container.firstChild) el.append(container.firstChild);
 
-    el.querySelector('.explorer-list')!.addEventListener('click', () => {
-      explorerRevealed = true;
-      updateExplorerPanel();
-    });
+    const list = el.querySelector('.explorer-list')!;
+    if (error) {
+      const switchBtn = list.querySelector('.explorer-error-switch');
+      switchBtn?.addEventListener('click', () => applySidebarTab('personal'));
+    } else {
+      list.addEventListener('click', () => {
+        explorerRevealed = true;
+        updateExplorerPanel();
+      });
+    }
     return;
   }
 

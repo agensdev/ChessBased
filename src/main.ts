@@ -7,7 +7,7 @@ import { loadConfig, saveConfig } from './config';
 import { loadRepertoire } from './repertoire';
 import {
   startGame, newGame, setListeners, updateConfig, getPhase,
-  getExplorerData, fetchExplorerForFen, playExplorerMove, continueFromHere, playAutoMove,
+  getExplorerData, fetchExplorerForFen, playExplorerMove, continueFromHere, playAutoMove, tryBotMove,
 } from './game';
 import {
   flipBoard, navigateBack, navigateForward, navigateTo, onViewChange,
@@ -202,9 +202,10 @@ function boot(): void {
       refreshTreeIfVisible();
     },
     () => {
-      // Explorer mode changed — re-render panel
+      // Explorer mode changed — re-render panel and trigger bot if needed
       updateExplorerPanel();
       updateAlertBanner();
+      tryBotMove();
     },
   );
 

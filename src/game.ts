@@ -15,15 +15,20 @@ import {
   resetBoard,
   setOrientation,
 } from './board';
-import { queryExplorer } from './explorer';
+import { queryExplorer, setRetryListener } from './explorer';
 import { selectBotMove } from './bot';
 import { getExplorerMode, queryPersonalExplorer } from './personal-explorer';
+
+function cacheKey(fen: string): string {
+  return fen.split(' ').slice(0, 4).join(' ');
+}
 
 let phase: GamePhase = 'USER_TURN';
 let config: AppConfig;
 
 let currentExplorerData: ExplorerResponse | null = null;
 let currentExplorerFen: string = '';
+let currentExplorerError: string | null = null;
 let autoMoveInProgress = false;
 
 // Cache explorer responses to avoid re-fetching when navigating
@@ -45,6 +50,11 @@ export function setListeners(
   onPhaseChange = phaseCb;
   onExplorerUpdate = explorerCb;
   onMoveUpdate = moveCb;
+
+  setRetryListener((attempt, max) => {
+    currentExplorerError = `Rate limited — retrying (${attempt}/${max})`;
+    onExplorerUpdate?.();
+  });
 }
 
 function setPhase(p: GamePhase): void {
@@ -56,8 +66,8 @@ export function getPhase(): GamePhase {
   return phase;
 }
 
-export function getExplorerData(): { data: ExplorerResponse | null; fen: string } {
-  return { data: currentExplorerData, fen: currentExplorerFen };
+export function getExplorerData(): { data: ExplorerResponse | null; fen: string; error: string | null } {
+  return { data: currentExplorerData, fen: currentExplorerFen, error: currentExplorerError };
 }
 
 /** Returns the color the bot plays, or null if manual mode */
@@ -115,10 +125,11 @@ export function newGame(appConfig: AppConfig): void {
 
 export async function fetchExplorerForFen(fen: string): Promise<ExplorerResponse | null> {
   // Check cache first
-  const cached = explorerCache.get(fen);
+  const cached = explorerCache.get(cacheKey(fen));
   if (cached) {
     currentExplorerData = cached;
     currentExplorerFen = fen;
+    currentExplorerError = null;
     onExplorerUpdate?.();
     return cached;
   }
@@ -134,15 +145,17 @@ export async function fetchExplorerForFen(fen: string): Promise<ExplorerResponse
   try {
     const data = await queryExplorer(fen, config);
     if (data) {
-      explorerCache.set(fen, data);
+      explorerCache.set(cacheKey(fen), data);
     }
     currentExplorerData = data;
     currentExplorerFen = fen;
+    currentExplorerError = null;
     onExplorerUpdate?.();
     return data;
-  } catch {
+  } catch (err) {
     currentExplorerData = null;
     currentExplorerFen = fen;
+    currentExplorerError = err instanceof Error ? err.message : 'Explorer request failed';
     onExplorerUpdate?.();
     return null;
   }
@@ -164,7 +177,10 @@ async function onUserMove(_entry: MoveHistoryEntry): Promise<void> {
   }
 }
 
+let botTurnId = 0;
+
 async function doBotTurn(): Promise<void> {
+  const turnId = botTurnId;
   setPhase('BOT_THINKING');
 
   const fen = getFen();
@@ -176,6 +192,7 @@ async function doBotTurn(): Promise<void> {
   if (!data) {
     data = await fetchExplorerForFen(fen);
   }
+  if (turnId !== botTurnId) return; // superseded
 
   if (!data || data.moves.length === 0) {
     setPhase('OUT_OF_BOOK');
@@ -190,6 +207,7 @@ async function doBotTurn(): Promise<void> {
 
   const delay = 300 + Math.random() * 400;
   await new Promise((r) => setTimeout(r, delay));
+  if (turnId !== botTurnId) return; // superseded
 
   playBotMove(selected.uci);
   onMoveUpdate?.();
@@ -273,6 +291,13 @@ export async function playAutoMove(): Promise<void> {
     }
   } finally {
     autoMoveInProgress = false;
+  }
+}
+
+export function tryBotMove(): void {
+  if (!isViewingHistory() && !isGameOver() && shouldBotPlay()) {
+    botTurnId++; // cancel any in-flight bot turn
+    doBotTurn();
   }
 }
 

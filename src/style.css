@@ -1391,6 +1391,11 @@ cg-board square.selected {
   cursor: pointer;
 }
 
+.explorer-skeleton.skeleton-static .explorer-move {
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+
 @keyframes skeleton-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -1408,12 +1413,46 @@ cg-board square.selected {
   pointer-events: none;
   letter-spacing: 0.03em;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.25);
   animation: hint-pulse 2.5s ease-in-out infinite;
 }
 
 @keyframes hint-pulse {
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
+}
+
+.explorer-hint-error {
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+  animation: none;
+  opacity: 1;
+}
+
+.explorer-error-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: error-spin 0.8s linear infinite;
+}
+
+@keyframes error-spin {
+  to { transform: rotate(360deg); }
+}
+
+.explorer-error-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.explorer-hint-error .explorer-error-switch {
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .explorer-san {
