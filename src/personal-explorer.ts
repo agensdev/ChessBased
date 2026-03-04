@@ -699,7 +699,7 @@ export async function importFromLichess(
     signal,
   });
 
-  if (resp.status === 404) throw new Error('User not found on Lichess');
+  if (resp.status === 404) throw new Error('User not found on Lichess — check the spelling or try Chess.com');
   if (resp.status === 429) throw new Error('Rate limited — please wait a minute and try again');
   if (!resp.ok) throw new Error(`Lichess API error (${resp.status})`);
 
@@ -779,7 +779,7 @@ export async function importFromChesscom(
     { signal },
   );
 
-  if (archResp.status === 404) throw new Error('User not found on Chess.com');
+  if (archResp.status === 404) throw new Error('User not found on Chess.com — check the spelling or try Lichess');
   if (!archResp.ok) throw new Error(`Chess.com API error (${archResp.status})`);
 
   const archData = await archResp.json() as { archives: string[] };

@@ -13,6 +13,7 @@ export interface EngineLine {
 
 type EvalCallback = (score: EvalScore) => void;
 type LinesCallback = (lines: EngineLine[]) => void;
+type EngineErrorCallback = (msg: string) => void;
 
 const SEARCH_DEPTH = 18;
 const STOP_TIMEOUT_MS = 10_000;
@@ -47,6 +48,8 @@ let currentLines: Map<number, EngineLine> = new Map();
 let currentMultiPV = 1;
 let searchBlackToMove = false;
 let pendingLinesCallback: LinesCallback | null = null;
+let onEngineError: EngineErrorCallback | null = null;
+let initFailCount = 0;
 
 // Start idle
 idle.resolve();
@@ -125,10 +128,16 @@ function createWorker(): Worker {
 
   w.addEventListener('error', () => {
     console.warn('Stockfish worker crashed, restarting…');
+    initFailCount++;
     const pending = queued || (searching && currentCallback
       ? { fen: '', onUpdate: currentCallback }
       : null);
     teardown(w);
+
+    if (initFailCount >= 2) {
+      onEngineError?.('Engine unavailable — your browser may not support WebAssembly');
+      return;
+    }
 
     initEngine();
     if (pending && pending.fen) {
@@ -275,6 +284,22 @@ export function formatScore(score: EvalScore): string {
   const pawns = score.value / 100;
   const sign = pawns > 0 ? '+' : '';
   return `${sign}${pawns.toFixed(1)}`;
+}
+
+export function setEngineErrorListener(cb: EngineErrorCallback | null): void {
+  onEngineError = cb;
+}
+
+export function retryEngine(): void {
+  initFailCount = 0;
+  if (worker) {
+    teardown(worker);
+  }
+  initEngine();
+}
+
+export function isEngineReady(): boolean {
+  return worker !== null;
 }
 
 export function destroyEngine(): void {

@@ -39,7 +39,7 @@ import { closeReportPage, openReportPage, setReportNavigateCallback, shouldResto
 import { setPersonalFilters, isDBReady } from './personal-explorer';
 import { initMobileTabs } from './mobile-tabs';
 import type { AppConfig, GamePhase } from './types';
-import { initEngine, evaluate, winningChance, formatScore, setMultiPV } from './engine';
+import { initEngine, evaluate, winningChance, formatScore, setMultiPV, setEngineErrorListener, retryEngine } from './engine';
 import type { EvalScore, EngineLine } from './engine';
 import {
   initOnboarding, isFirstVisit, showFirstVisitHints,
@@ -95,11 +95,18 @@ function setEvalBarVisible(visible: boolean): void {
   document.getElementById('eval-bar')!.classList.toggle('hidden', !visible);
 }
 
+function setEvalBarLoading(): void {
+  const labelEl = document.getElementById('eval-label')!;
+  labelEl.textContent = '...';
+  labelEl.className = 'eval-loading';
+}
+
 function requestEval(fen: string): void {
   setEvalWinPct(null); // clear stale eval while new one computes
   const linesEnabled = config.engineLineCount > 0;
   if (!config.showEval && !linesEnabled) return;
 
+  setEvalBarLoading();
   setMultiPV(linesEnabled ? config.engineLineCount : 1);
 
   const linesCallback = linesEnabled
@@ -124,6 +131,21 @@ function boot(): void {
   const boardEl = document.getElementById('board')!;
 
   initEngine();
+
+  setEngineErrorListener((msg) => {
+    const labelEl = document.getElementById('eval-label')!;
+    const barEl = document.getElementById('eval-bar')!;
+    labelEl.textContent = '!';
+    labelEl.className = 'engine-error';
+    barEl.setAttribute('data-tooltip', msg + ' — click to retry');
+    barEl.classList.add('engine-error-state');
+    barEl.onclick = () => {
+      barEl.classList.remove('engine-error-state');
+      barEl.onclick = null;
+      retryEngine();
+      requestEval(getViewedFen());
+    };
+  });
 
   setListeners(
     (phase: GamePhase) => {
@@ -206,6 +228,10 @@ function boot(): void {
       updateExplorerPanel();
       updateAlertBanner();
       tryBotMove();
+    },
+    () => {
+      // Retry explorer fetch for current position
+      fetchExplorerForFen(getViewedFen());
     },
   );
 

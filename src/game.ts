@@ -51,8 +51,8 @@ export function setListeners(
   onExplorerUpdate = explorerCb;
   onMoveUpdate = moveCb;
 
-  setRetryListener((attempt, max) => {
-    currentExplorerError = `Rate limited — retrying (${attempt}/${max})`;
+  setRetryListener((attempt, max, delaySec) => {
+    currentExplorerError = `Rate limited — retrying in ${delaySec}s (${attempt}/${max})`;
     onExplorerUpdate?.();
   });
 }

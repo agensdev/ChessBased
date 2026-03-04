@@ -6,9 +6,9 @@ let pending: { promise: Promise<ExplorerResponse>; fen: string } | null = null;
 
 const MAX_RETRIES = 5;
 
-let onRetry: ((attempt: number, maxRetries: number) => void) | null = null;
+let onRetry: ((attempt: number, maxRetries: number, delaySec: number) => void) | null = null;
 
-export function setRetryListener(cb: (attempt: number, maxRetries: number) => void): void {
+export function setRetryListener(cb: (attempt: number, maxRetries: number, delaySec: number) => void): void {
   onRetry = cb;
 }
 
@@ -29,28 +29,28 @@ async function fetchExplorer(
   try {
     res = await fetch(`${BASE_URL}?${params}`);
   } catch {
-    // CORS block on 429 — fetch throws TypeError before we can read status
+    // CORS block on 429 or network error — fetch throws TypeError
     if (attempt >= MAX_RETRIES) {
-      throw new Error('Explorer API rate limited after max retries');
+      throw new Error('network:Could not connect to the Lichess database');
     }
-    onRetry?.(attempt + 1, MAX_RETRIES);
-    const delay = 2000 * Math.pow(2, attempt);
+    const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s, 16s
+    onRetry?.(attempt + 1, MAX_RETRIES, delay / 1000);
     await new Promise((r) => setTimeout(r, delay));
     return fetchExplorer(fen, config, attempt + 1);
   }
 
   if (res.status === 429) {
     if (attempt >= MAX_RETRIES) {
-      throw new Error('Explorer API rate limited after max retries');
+      throw new Error('ratelimit:Lichess database is busy — try again shortly');
     }
-    onRetry?.(attempt + 1, MAX_RETRIES);
-    const delay = 2000 * Math.pow(2, attempt);
+    const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s, 16s
+    onRetry?.(attempt + 1, MAX_RETRIES, delay / 1000);
     await new Promise((r) => setTimeout(r, delay));
     return fetchExplorer(fen, config, attempt + 1);
   }
 
   if (!res.ok) {
-    throw new Error(`Explorer API error: ${res.status}`);
+    throw new Error(`error:Lichess explorer error (${res.status})`);
   }
 
   return res.json();

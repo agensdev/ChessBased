@@ -24,7 +24,7 @@ import { importPgn, fetchStudyPgn } from './pgn-import';
 import { initLibraryModal, openLibraryModal } from './opening-library';
 import { findOpeningByEco, findPgnByEco } from './opening-index';
 import { exportActiveOpening, exportAll } from './pgn-export';
-import { getExplorerData, getExplorerCache } from './game';
+import { getExplorerData, getExplorerCache, getPhase } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
 import { formatScore } from './engine';
 import type { EngineLine } from './engine';
@@ -38,7 +38,7 @@ import {
   getExplorerMode, setExplorerMode, hasPersonalData, getPersonalConfig,
   queryPersonalExplorer, clearPersonalData, importFromLichess, importFromChesscom,
   initPersonalExplorer, getPersonalStats, setPersonalFilters, getPersonalFilters,
-  getFilteredGameCount, getPersonalGames, gameMatchesFilters,
+  getFilteredGameCount, getPersonalGames, gameMatchesFilters, isDBReady,
   type ExplorerMode, type Platform, type LichessFilters, type GameMeta,
 } from './personal-explorer';
 import { openReportPage, isReportPageOpen } from './report-ui';
@@ -53,6 +53,8 @@ type NewGameCallback = () => void;
 type FlipCallback = () => void;
 type ExplorerMoveClickCallback = (uci: string) => void;
 
+type RetryExplorerCallback = () => void;
+
 let configChangeCb: ConfigChangeCallback;
 let newGameCb: NewGameCallback;
 let flipCb: FlipCallback;
@@ -60,6 +62,7 @@ let explorerMoveClickCb: ExplorerMoveClickCallback | null = null;
 let continueCb: ContinueCallback | null = null;
 let openingChangeCb: OpeningChangeCallback | null = null;
 let modeChangeCb: ModeChangeCallback | null = null;
+let retryExplorerCb: RetryExplorerCallback | null = null;
 let currentConfig: AppConfig;
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -108,6 +111,7 @@ export function initUI(
   onContinue?: ContinueCallback,
   onRepertoireChange?: OpeningChangeCallback,
   onModeChange?: ModeChangeCallback,
+  onRetryExplorer?: RetryExplorerCallback,
 ): void {
   currentConfig = { ...config };
   if (config.engineLineCount > 0) lastEngineLineCount = config.engineLineCount;
@@ -118,6 +122,7 @@ export function initUI(
   continueCb = onContinue ?? null;
   openingChangeCb = onRepertoireChange ?? null;
   modeChangeCb = onModeChange ?? null;
+  retryExplorerCb = onRetryExplorer ?? null;
 
   initPersonalExplorer().then(() => {
     // Re-render explorer panel once DB is loaded, in case user is already in personal mode
@@ -1618,13 +1623,28 @@ function refreshPersonalMoves(): void {
     const noData = document.createElement('div');
     noData.className = 'personal-empty-state';
     noData.style.padding = '16px';
-    noData.textContent = 'No games in this position.';
+    const totalGames = getFilteredGameCount();
+    noData.textContent = totalGames > 0
+      ? `None of your ${totalGames.toLocaleString()} games reached this position.`
+      : 'No games in this position.';
     el.append(noData);
     return;
   }
 
   renderMoveRows(moves, fen, null, el);
   if (!explorerFiltersOpen) updateRecentGamesPanel();
+}
+
+function renderPersonalLoadingState(el: HTMLElement): void {
+  let html = '<div class="explorer-header"><span>Move</span><span></span><span>%</span><span>Games</span><span>Results</span><span></span></div>';
+  html += '<div class="explorer-list explorer-skeleton">';
+  for (let i = 0; i < EXPLORER_ROWS; i++) {
+    html += '<div class="explorer-move skeleton-row">&nbsp;</div>';
+  }
+  html += '</div>';
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  while (container.firstChild) el.append(container.firstChild);
 }
 
 function renderPersonalEmptyState(el: HTMLElement): void {
@@ -1944,6 +1964,10 @@ export function updateExplorerPanel(): void {
   }
 
   if (mode === 'personal') {
+    if (!isDBReady()) {
+      renderPersonalLoadingState(el);
+      return;
+    }
     if (!hasPersonalData()) {
       renderPersonalEmptyState(el);
       return;
@@ -1978,7 +2002,10 @@ export function updateExplorerPanel(): void {
       const noData = document.createElement('div');
       noData.className = 'personal-empty-state';
       noData.style.padding = '16px';
-      noData.textContent = 'No games in this position.';
+      const totalGames = getFilteredGameCount();
+      noData.textContent = totalGames > 0
+        ? `None of your ${totalGames.toLocaleString()} games reached this position.`
+        : 'No games in this position.';
       el.append(noData);
       updateRecentGamesPanel();
       return;
@@ -2143,8 +2170,14 @@ export function updateExplorerPanel(): void {
         html += `<span>${error}</span>`;
         html += '<span class="explorer-error-sub">Retrying automatically</span>';
       } else {
+        const isNetwork = error.startsWith('network:');
+        const displayMsg = error.replace(/^(network|ratelimit|error):/, '');
         html += '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-        html += '<span>Could not reach Lichess explorer</span>';
+        html += `<span>${displayMsg}</span>`;
+        if (isNetwork) {
+          html += '<span class="explorer-error-sub">Check your internet connection</span>';
+        }
+        html += '<button class="btn btn-sm explorer-error-retry">Retry</button>';
       }
       if (hasPersonalData()) {
         html += '<button class="btn btn-sm explorer-error-switch">Switch to My Games</button>';
@@ -2160,6 +2193,8 @@ export function updateExplorerPanel(): void {
 
     const list = el.querySelector('.explorer-list')!;
     if (error) {
+      const retryBtn = list.querySelector('.explorer-error-retry');
+      retryBtn?.addEventListener('click', () => retryExplorerCb?.());
       const switchBtn = list.querySelector('.explorer-error-switch');
       switchBtn?.addEventListener('click', () => applySidebarTab('personal'));
     } else {
@@ -2168,6 +2203,28 @@ export function updateExplorerPanel(): void {
         updateExplorerPanel();
       });
     }
+    return;
+  }
+
+  // Out-of-book / no moves empty state
+  if (moves.length === 0 && data) {
+    const phase = getPhase();
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'explorer-empty-state';
+    if (phase === 'OUT_OF_BOOK' || phase === 'GAME_OVER') {
+      const msgEl = document.createElement('span');
+      msgEl.textContent = 'No moves found in the opening database';
+      emptyDiv.append(msgEl);
+      const newGameBtn = document.createElement('button');
+      newGameBtn.className = 'btn btn-sm';
+      newGameBtn.textContent = 'New game';
+      newGameBtn.addEventListener('click', () => newGameCb());
+      emptyDiv.append(newGameBtn);
+    } else {
+      emptyDiv.textContent = 'No moves in the database for this position.';
+    }
+    el.append(emptyDiv);
+    updateRecentGamesPanel();
     return;
   }
 
@@ -2197,14 +2254,14 @@ function updateRecentGamesPanel(): void {
   const prevList = container.querySelector('.recent-games-list');
   if (prevList) savedRecentGamesScroll = prevList.scrollTop;
   container.innerHTML = '';
-  const hasData = hasPersonalData();
+  const hasData = isDBReady() && hasPersonalData();
   const sectionHeader = document.getElementById('games-section-header');
 
   // Show/hide sidebar tabs based on whether personal data exists
   const sidebarTabs = document.getElementById('sidebar-tabs');
   if (sidebarTabs) {
-    sidebarTabs.style.display = hasData ? '' : 'none';
-    if (!hasData && activeTab === 'personal') {
+    sidebarTabs.style.display = hasData || !isDBReady() ? '' : 'none';
+    if (!hasData && isDBReady() && activeTab === 'personal') {
       applySidebarTab('database');
     }
   }
@@ -2710,6 +2767,7 @@ async function doStudyFetch(): Promise<void> {
   }
 
   btn.disabled = true;
+  input.disabled = true;
   btn.textContent = 'Fetching…';
   resultEl.textContent = '';
   resultEl.className = 'pgn-result';
@@ -2724,6 +2782,7 @@ async function doStudyFetch(): Promise<void> {
     resultEl.className = 'pgn-result error';
   } finally {
     btn.disabled = false;
+    input.disabled = false;
     btn.textContent = 'Fetch';
   }
 }

@@ -570,6 +570,11 @@ function renderPage(page: HTMLElement, allGames: readonly GameMeta[], username: 
       refreshBtn.disabled = false;
       refreshBtn.textContent = 'Refresh games';
       refreshStatus.textContent = e instanceof Error ? e.message : 'Refresh failed';
+      setTimeout(() => {
+        if (refreshStatus.textContent && !reportRefreshInProgress) {
+          refreshStatus.textContent = '';
+        }
+      }, 8000);
     }
   });
   right.append(user, refreshBtn, refreshStatus);
