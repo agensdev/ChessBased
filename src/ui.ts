@@ -2142,7 +2142,43 @@ export function updateExplorerPanel(): void {
   const divider = document.createElement('hr');
   divider.className = 'cog-popover-divider';
 
-  popover.append(ratingsLabel, ratingsGrid, speedsLabel, speedsGrid, divider, topNLabel, topNSlider, playRateLabel, playRateSlider, weightLabel, weightSegment);
+  // Lichess API token (collapsed by default)
+  const tokenToggle = document.createElement('button');
+  tokenToggle.className = 'token-toggle';
+  tokenToggle.textContent = currentConfig.lichessToken ? 'Custom token \u2713' : 'Use own Lichess token';
+  const tokenSection = document.createElement('div');
+  tokenSection.className = 'token-section hidden';
+  const tokenWrap = document.createElement('div');
+  tokenWrap.className = 'token-input-wrap';
+  const tokenInput = document.createElement('input');
+  tokenInput.type = 'password';
+  tokenInput.className = 'token-input';
+  tokenInput.placeholder = 'lip_...';
+  tokenInput.value = currentConfig.lichessToken || '';
+  tokenInput.spellcheck = false;
+  tokenInput.autocomplete = 'off';
+  tokenInput.addEventListener('change', () => {
+    const val = tokenInput.value.trim();
+    currentConfig.lichessToken = val;
+    tokenToggle.textContent = val ? 'Custom token \u2713' : 'Use own Lichess token';
+    configChangeCb(currentConfig);
+  });
+  tokenWrap.append(tokenInput);
+  const tokenHint = document.createElement('a');
+  tokenHint.className = 'token-hint';
+  tokenHint.href = 'https://lichess.org/account/oauth/token/create';
+  tokenHint.target = '_blank';
+  tokenHint.rel = 'noopener';
+  tokenHint.textContent = 'Create token (no scopes needed)';
+  tokenSection.append(tokenWrap, tokenHint);
+  tokenToggle.addEventListener('click', () => {
+    tokenSection.classList.toggle('hidden');
+  });
+
+  const divider2 = document.createElement('hr');
+  divider2.className = 'cog-popover-divider';
+
+  popover.append(ratingsLabel, ratingsGrid, speedsLabel, speedsGrid, divider, topNLabel, topNSlider, playRateLabel, playRateSlider, weightLabel, weightSegment, divider2, tokenToggle, tokenSection);
 
   cogBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2152,8 +2188,8 @@ export function updateExplorerPanel(): void {
   });
 
   cogWrap.append(cogBtn);
-  infoBar.append(cogWrap);
-  el.append(infoBar, popover);
+  infoBar.append(cogWrap, popover);
+  el.append(infoBar);
 
   if (error || !showContent) {
     const loading = !data && !error;

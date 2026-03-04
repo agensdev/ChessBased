@@ -2348,10 +2348,20 @@ input[type='range']::-moz-range-track {
 }
 
 .explorer-cog-popover {
-  padding: 10px;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 8px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: dropdown-in 0.15s ease-out;
 }
 
 .cog-popover-divider {
@@ -2379,6 +2389,62 @@ input[type='range']::-moz-range-track {
 
 .explorer-cog-popover .segment-btn {
   flex: 1;
+}
+
+.token-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.token-toggle:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-hover);
+}
+
+.token-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.token-input {
+  flex: 1;
+  background: var(--bg-darker, #1a1a1a);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 6px;
+  min-width: 0;
+}
+
+.token-input:focus {
+  outline: none;
+  border-color: var(--accent, #8aa2d3);
+}
+
+.token-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.token-hint:hover {
+  color: var(--text);
 }
 
 /* ── Data Tooltip System (JS-positioned) ── */
@@ -3220,6 +3286,7 @@ input[type='range']::-moz-range-track {
 }
 
 .database-info-bar {
+  position: relative;
   padding-left: 10px;
   font-size: 11px;
   color: var(--text-secondary);

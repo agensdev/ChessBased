@@ -1,6 +1,7 @@
 import type { ExplorerResponse, AppConfig } from './types';
 
 const BASE_URL = 'https://explorer.lichess.ovh/lichess';
+const DEFAULT_TOKEN = import.meta.env.VITE_LICHESS_TOKEN ?? '';
 
 let pending: { promise: Promise<ExplorerResponse>; fen: string } | null = null;
 
@@ -25,9 +26,14 @@ async function fetchExplorer(
     recentGames: '0',
   });
 
+  const token = config.lichessToken || DEFAULT_TOKEN;
+  const headers: HeadersInit = {
+    'Authorization': `Bearer ${token}`,
+  };
+
   let res: Response;
   try {
-    res = await fetch(`${BASE_URL}?${params}`);
+    res = await fetch(`${BASE_URL}?${params}`, { headers });
   } catch {
     // CORS block on 429 or network error — fetch throws TypeError
     if (attempt >= MAX_RETRIES) {
@@ -47,6 +53,10 @@ async function fetchExplorer(
     onRetry?.(attempt + 1, MAX_RETRIES, delay / 1000);
     await new Promise((r) => setTimeout(r, delay));
     return fetchExplorer(fen, config, attempt + 1);
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('auth:Lichess API token required — add one in explorer settings');
   }
 
   if (!res.ok) {
