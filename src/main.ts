@@ -38,14 +38,10 @@ import { setTreeNavigateCallback } from './tree-ui';
 import { closeReportPage, openReportPage, setReportNavigateCallback, shouldRestoreReportPage } from './report-ui';
 import { setPersonalFilters, isDBReady } from './personal-explorer';
 import { initMobileTabs } from './mobile-tabs';
+import { hasCompletedOnboarding, showOnboarding } from './onboarding';
 import type { AppConfig, GamePhase } from './types';
 import { initEngine, evaluate, winningChance, formatScore, setMultiPV, setEngineErrorListener, retryEngine } from './engine';
 import type { EvalScore, EngineLine } from './engine';
-import {
-  initOnboarding, isFirstVisit, showFirstVisitHints,
-  onPhaseChangeForOnboarding, onUserMoveForOnboarding,
-  onNewGameForOnboarding, onEvalBarVisibleForOnboarding,
-} from './onboarding';
 
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -150,7 +146,6 @@ function boot(): void {
   setListeners(
     (phase: GamePhase) => {
       updateStatus(phase, currentOpeningName);
-      onPhaseChangeForOnboarding(phase);
     },
     () => {
       const { data } = getExplorerData();
@@ -169,10 +164,6 @@ function boot(): void {
       updateMoveList();
       updateExplorerPanel();
       requestEval(getViewedFen());
-      // onMoveUpdate fires for user moves AND newGame resets — guard with history length
-      if (getMoveHistory().length > 0) {
-        onUserMoveForOnboarding();
-      }
     },
   );
 
@@ -201,7 +192,6 @@ function boot(): void {
     () => {
       clearLoadedGame();
       currentOpeningName = undefined;
-      onNewGameForOnboarding();
       newGame(config);
     },
     () => {
@@ -217,7 +207,6 @@ function boot(): void {
     () => {
       clearLoadedGame();
       currentOpeningName = undefined;
-      onNewGameForOnboarding();
       newGame(config);
       updateExplorerPanel();
       updateAlertBanner();
@@ -272,8 +261,7 @@ function boot(): void {
       case 'n':
         clearLoadedGame();
         currentOpeningName = undefined;
-        onNewGameForOnboarding();
-        newGame(config);
+          newGame(config);
         break;
       case 'f':
         flipBoard();
@@ -296,8 +284,7 @@ function boot(): void {
           continueFromHere();
         } else if (getPhase() === 'OUT_OF_BOOK' || getPhase() === 'GAME_OVER') {
           currentOpeningName = undefined;
-          onNewGameForOnboarding();
-          newGame(config);
+              newGame(config);
         } else {
           playAutoMove();
         }
@@ -364,8 +351,6 @@ function boot(): void {
   evalBar.setAttribute('data-tooltip', 'Stockfish evaluation — white plays from bottom');
   evalBar.classList.add('tooltip-below');
 
-  initOnboarding();
-
   startGame(boardEl, config);
   refreshExplorerMode();
   updateMoveList();
@@ -374,11 +359,15 @@ function boot(): void {
   setEngineLinesVisible(config.engineLineCount > 0);
   requestEval(STARTING_FEN);
 
-  if (isFirstVisit()) {
-    openHelpModal();
-    showFirstVisitHints();
-    if (config.showEval) onEvalBarVisibleForOnboarding();
+  if (!hasCompletedOnboarding()) {
+    showOnboarding();
   }
+
+  // TEMP: trigger onboarding from console with replayOnboarding()
+  (window as any).replayOnboarding = () => {
+    localStorage.removeItem('chessbased-onboarding-complete');
+    showOnboarding();
+  };
 
   initMobileTabs();
   restoreReportPageIfNeeded();

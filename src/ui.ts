@@ -28,7 +28,6 @@ import { getExplorerData, getExplorerCache, getPhase } from './game';
 import { analyzePosition, getBadgeForMove, type ParentContext } from './analysis';
 import { formatScore } from './engine';
 import type { EngineLine } from './engine';
-import { onLockMoveForOnboarding } from './onboarding';
 import { Chess } from 'chessops/chess';
 import { parseFen } from 'chessops/fen';
 import { parseUci } from 'chessops/util';
@@ -1887,19 +1886,31 @@ function renderMoveRows(
   wireExplorerRowEvents(el, fen);
 }
 
+let lastToggledUci: string | null = null;
+
 function wireExplorerRowEvents(el: HTMLElement, fen: string): void {
+  // Animate lock button that was just toggled
+  if (lastToggledUci) {
+    const btn = el.querySelector(`.lock-btn[data-uci="${lastToggledUci}"]`) as HTMLElement | null;
+    if (btn) {
+      btn.classList.add('lock-snap');
+      btn.addEventListener('animationend', () => btn.classList.remove('lock-snap'), { once: true });
+    }
+    lastToggledUci = null;
+  }
+
   el.querySelectorAll('.lock-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const target = e.currentTarget as HTMLElement;
       const uci = target.dataset.uci!;
       const btnFen = decodeURIComponent(target.dataset.fen!);
+      lastToggledUci = uci;
       if (isMoveLocked(btnFen, uci)) {
         unlockMove(btnFen, uci);
       } else {
         if (lockMove(btnFen, uci)) {
           renderSystemPicker();
           openingChangeCb?.();
-          onLockMoveForOnboarding();
         }
       }
       updateExplorerPanel();
@@ -3193,7 +3204,6 @@ export function toggleLockCurrentMove(): void {
     if (lockMove(fen, nextMoveUci)) {
       renderSystemPicker();
       openingChangeCb?.();
-      onLockMoveForOnboarding();
     }
   }
   updateExplorerPanel();
@@ -3202,7 +3212,7 @@ export function toggleLockCurrentMove(): void {
 
 export function isAnyModalOpen(): boolean {
   if (isReportPageOpen()) return true;
-  const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal', 'confirm-overlay'];
+  const modalIds = ['settings-drawer', 'pgn-modal', 'help-modal', 'personal-import-modal', 'library-modal', 'confirm-overlay', 'onboarding-overlay'];
   return modalIds.some(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
