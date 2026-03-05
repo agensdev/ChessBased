@@ -4,3 +4,5 @@ dist
 .firebase
 public/stockfish.*
 skills
+.env
+.env.*
